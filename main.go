@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
 	"gopkg.in/yaml.v2"
 	"io"
@@ -21,43 +20,27 @@ func main() {
 	}
 	conf := new(SwitchyConfig)
 	yaml.Unmarshal(all, conf)
-	log.Println(conf)
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
+	upstreams := conf.init()
 
-	//for _, config := range conf.Upstream {
-	//	up, error := upstream.AddressToUpstream(config.Url, nil)
-	//	if error != nil {
-	//		log.Printf("init upstream fail: %+v", error)
-	//	}
-	//}
-
-	toUpstream, _ := upstream.AddressToUpstream("127.0.0.1:8053", &upstream.Options{
-		Bootstrap:                 nil,
-		Timeout:                   0,
-		ServerIPAddrs:             nil,
-		InsecureSkipVerify:        false,
-		VerifyServerCertificate:   nil,
-		VerifyDNSCryptCertificate: nil,
-	})
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		go func() {
+			//log.Printf("\n---recv start---\n %v\n---recv end---", msg)
 			if msg.Question[0].Qtype == dns.TypeA || msg.Question[0].Qtype == dns.TypeAAAA {
 
 			}
-			//log.Printf("\n---recv start---\n %v\n---recv end---", msg)
-			resp, err := toUpstream.Exchange(msg)
-			if err != nil {
-				log.Printf("upstream error: %v", err)
-			} else {
-				//log.Printf("\n---resp start---\n %v\n---resp end---", resp)
-				err := writer.WriteMsg(resp)
-				if err != nil {
-					log.Printf("write error: %v", err)
+			matched := false
+			for _, upstreamDNS := range upstreams {
+				if upstreamDNS.match(msg.Question[0].Name) {
+					matched = true
+					upstreamDNS.forwarded(writer, msg)
 				}
+			}
+			if !matched {
+				upstreams[len(upstreams)-1].forwarded(writer, msg)
 			}
 		}()
 	})
-
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Panicln(err)
