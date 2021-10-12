@@ -46,16 +46,21 @@ func (set DomainSet) matchBytes(domain []byte) bool {
 	}
 }
 
+var Accept = make(map[string]DomainSet, 0)
+
 func (set DomainSet) addDomain(domain string) {
 	index := strings.LastIndex(domain, ".")
 	if index == -1 {
-		set[domain] = map[string]DomainSet{}
+		set[domain] = Accept
 	} else {
-		subSet, exist := set[domain[index+1:]]
+		suffix := domain[index+1:]
+		subSet, exist := set[suffix]
 		if exist {
-			subSet.addDomain(domain[:index])
+			if len(subSet) != 0 {
+				subSet.addDomain(domain[:index])
+			}
 		} else {
-			set[domain[index+1:]] = newSubSet(domain[:index])
+			set[suffix] = newSubSet(domain[:index])
 		}
 	}
 }
@@ -64,7 +69,7 @@ func newSubSet(domain string) DomainSet {
 	set := make(DomainSet, 0)
 	index := strings.LastIndex(domain, ".")
 	if index == -1 {
-		set[domain] = map[string]DomainSet{}
+		set[domain] = Accept
 	} else {
 		set[domain[index+1:]] = newSubSet(domain[:index])
 	}

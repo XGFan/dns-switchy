@@ -8,8 +8,7 @@ upstream:
       - cn
       - qq.com
       - wechat.com
-      - :gfwlist
-      - :remote:https://www.example.com/raw.txt
+      - include:v2-rule.txt
   - name: doh
     url: https://cloudflare-dns.com/dns-query
     config:

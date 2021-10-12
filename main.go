@@ -15,6 +15,14 @@ func main() {
 	file := flag.String("c", "config.yaml", "config location")
 	flag.Parse()
 	log.Printf("Config: %s", *file)
+	executable, e := os.Executable()
+	if e == nil {
+		log.Printf("Executable Path: %s", executable)
+	}
+	wd, e := os.Getwd()
+	if e == nil {
+		log.Printf("Working Path: %s", wd)
+	}
 	open, err := os.Open(*file)
 	passOrFatal(err)
 	conf := new(config.SwitchyConfig)

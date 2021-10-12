@@ -1,21 +1,16 @@
 package matcher
 
 import (
-	"encoding/base64"
-	"fmt"
-	"io"
-	"net/http"
 	"testing"
 )
 
 func TestDomainSet_match(t *testing.T) {
-	resp, _ := http.Get("https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt")
-	decoder := base64.NewDecoder(base64.StdEncoding, resp.Body)
-	all, _ := io.ReadAll(decoder)
-	fmt.Println(string(all))
 	var set = NewDomainSet([]string{
 		"qq.com",
+		"a.qq.com",
+		"b.qq.com",
 		"cn",
+		"z.cn",
 		"google.com",
 	})
 	tests := []struct {
