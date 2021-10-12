@@ -3,6 +3,7 @@ package main
 import (
 	"dns-switchy/config"
 	"dns-switchy/resolver"
+	"flag"
 	"fmt"
 	"github.com/miekg/dns"
 	"gopkg.in/yaml.v2"
@@ -11,7 +12,10 @@ import (
 )
 
 func main() {
-	open, err := os.Open("config.yaml")
+	file := flag.String("c", "config.yaml", "config location")
+	flag.Parse()
+	log.Printf("Config: %s", *file)
+	open, err := os.Open(*file)
 	passOrFatal(err)
 	conf := new(config.SwitchyConfig)
 	err = yaml.NewDecoder(open).Decode(conf)
