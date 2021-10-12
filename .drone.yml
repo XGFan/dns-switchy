@@ -37,3 +37,14 @@ steps:
       script:
         - mv ~/dns-switchy /etc/dns-switchy/dns-switchy
         - /etc/init.d/dns-switchy restart
+  - name: notification
+    when:
+      status:
+        - success
+        - failure
+    image: docker.test4x.com/xgfan/drone-bark:9dccad32
+    settings:
+      token:
+        from_secret: bark_token
+      title: "{DRONE_REPO} {DRONE_BUILD_STATUS}"
+      content: "{DRONE_COMMIT_MESSAGE}"
