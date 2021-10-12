@@ -57,27 +57,30 @@ func parseRule(rules []string) []string {
 func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l := make([]DnsResolver, 0)
 	l = append(l, Hosts(conf.Host))
+	needFallback := true
 	for _, conf := range conf.Upstream {
 		up, err := upstream.AddressToUpstream(conf.Url, nil)
 		if err != nil {
 			log.Printf("init upstream fail: %+v", err)
 		}
 		parsed := parseRule(conf.Rule)
-		l = append(l, &UpstreamDNS{
-			Name:     conf.Name,
-			Upstream: up,
-			Matcher:  matcher.NewDomainSet(parsed),
-		})
+		if len(parsed) == 0 {
+			l = append(l, &UpstreamDNS{
+				Name:     conf.Name,
+				Upstream: up,
+				Matcher:  matcher.AcceptAll,
+			})
+			needFallback = false
+		} else {
+			l = append(l, &UpstreamDNS{
+				Name:     conf.Name,
+				Upstream: up,
+				Matcher:  matcher.NewDomainSet(parsed),
+			})
+		}
 	}
-	lastConfig := conf.Upstream[len(conf.Upstream)-1]
-	up, err := upstream.AddressToUpstream(lastConfig.Url, nil)
-	if err != nil {
-		log.Printf("init upstream fail: %+v", err)
+	if needFallback {
+		log.Fatalln("need a upstream as fall back")
 	}
-	l = append(l, &UpstreamDNS{
-		Name:     lastConfig.Name,
-		Upstream: up,
-		Matcher:  matcher.AcceptAll,
-	})
 	return l
 }

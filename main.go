@@ -30,7 +30,7 @@ func main() {
 	passOrFatal(err)
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
 	resolvers := resolver.Init(conf)
-	log.Printf("Started at %d, with %s", conf.Port, resolvers[:len(resolvers)-1])
+	log.Printf("Started at %d, with %s", conf.Port, resolvers)
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		go func() {
 			for _, upstream := range resolvers {
