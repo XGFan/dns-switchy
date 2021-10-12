@@ -7,6 +7,8 @@ steps:
     image: golang:1.17
     environment:
       GOPROXY: https://registry.test4x.com/repository/go-proxy/
+      GOOS: linux
+      GOARCH: amd64
     commands:
       - go build
       - ls -alh
