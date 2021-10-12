@@ -1,0 +1,37 @@
+kind: pipeline
+name: default
+type: kubernetes
+
+steps:
+  - name: build
+    image: golang:1.17
+    environment:
+      GOPROXY: https://registry.test4x.com/repository/go-proxy/
+    commands:
+      - go build
+      - ls -alh
+  - name: scp files
+    image: appleboy/drone-scp
+    settings:
+      host:
+        from_secret: server
+      username:
+        from_secret: username
+      key:
+        from_secret: ssh_key
+      port: 22
+      source: dns-switchy
+      target: ~/
+  - name: ssh deploy
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: server
+      username:
+        from_secret: username
+      key:
+        from_secret: ssh_key
+      port: 22
+      script:
+        - mv ~/dns-switchy /etc/dns-switchy/dns-switchy
+        - /etc/init.d/dns-switchy restart
