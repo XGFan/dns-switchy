@@ -5,10 +5,13 @@ upstream:
   - name: cn-dns
     url: 114.114.114.114:53
     rule:
-      - .cn
+      - cn
+      - qq.com
+      - wechat.com
       - :gfwlist
       - :remote:https://www.example.com/raw.txt
   - name: doh
     url: https://cloudflare-dns.com/dns-query
     config:
-      bootstrap: 114.114.114.114
+      bootstrap:
+        - 114.114.114.114

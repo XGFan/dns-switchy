@@ -1,4 +1,4 @@
-package main
+package matcher
 
 import (
 	"encoding/base64"
@@ -13,7 +13,7 @@ func TestDomainSet_match(t *testing.T) {
 	decoder := base64.NewDecoder(base64.StdEncoding, resp.Body)
 	all, _ := io.ReadAll(decoder)
 	fmt.Println(string(all))
-	var set = NewDomainTree([]string{
+	var set = NewDomainSet([]string{
 		"qq.com",
 		"cn",
 		"google.com",
@@ -30,7 +30,7 @@ func TestDomainSet_match(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.testDomain, func(t *testing.T) {
-			if got := set.match(tt.testDomain); got != tt.want {
+			if got := set.Match(tt.testDomain); got != tt.want {
 				t.Errorf("match() = %v, want %v", got, tt.want)
 			}
 		})
