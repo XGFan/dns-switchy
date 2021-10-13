@@ -14,3 +14,11 @@ upstream:
     config:
       bootstrap:
         - 114.114.114.114
+    rule:
+      - include:gfwlist-rule.txt
+  - name: google-ecs
+    url: https://dns.google/dns-query
+    config:
+      clientIP: 59.172.144.144
+      bootstrap:
+        - 114.114.114.114
