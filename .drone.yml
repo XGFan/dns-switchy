@@ -13,6 +13,9 @@ steps:
     commands:
       - go build
       - ls -alh
+  - name: upx
+    image: hairyhenderson/upx:3.96
+    commands: upx dns-switchy
   - name: scp files
     image: appleboy/drone-scp
     settings:
