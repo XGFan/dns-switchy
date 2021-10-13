@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"bytes"
 	"dns-switchy/config"
 	"dns-switchy/matcher"
 	"github.com/AdguardTeam/dnsproxy/upstream"
@@ -23,16 +24,16 @@ func parseRule(rules []string) []string {
 				if strings.HasPrefix(target, "http") {
 					resp, err := http.Get(target)
 					if err != nil {
-						log.Printf("Get %s fail: %s", target, err)
-						reader = io.NopCloser(nil)
+						log.Printf("Read %s fail: %s", target, err)
+						reader = io.NopCloser(bytes.NewReader(nil))
 					} else {
 						reader = resp.Body
 					}
 				} else {
 					open, err := os.Open(target)
 					if err != nil {
-						log.Printf("Get %s fail: %s", target, err)
-						reader = io.NopCloser(nil)
+						log.Printf("Read %s fail: %s", target, err)
+						reader = io.NopCloser(bytes.NewReader(nil))
 					} else {
 						reader = open
 					}
@@ -59,7 +60,10 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l = append(l, Hosts(conf.Host))
 	needFallback := true
 	for _, conf := range conf.Upstream {
-		up, err := upstream.AddressToUpstream(conf.Url, nil)
+		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
+			Bootstrap: conf.Config.Bootstrap,
+			Timeout:   conf.Config.Timeout,
+		})
 		if err != nil {
 			log.Printf("init upstream fail: %+v", err)
 		}
@@ -69,6 +73,7 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 				Name:     conf.Name,
 				Upstream: up,
 				Matcher:  matcher.AcceptAll,
+				clientIP: conf.Config.ClientIP,
 			})
 			needFallback = false
 		} else {
@@ -76,6 +81,7 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 				Name:     conf.Name,
 				Upstream: up,
 				Matcher:  matcher.NewDomainSet(parsed),
+				clientIP: conf.Config.ClientIP,
 			})
 		}
 	}

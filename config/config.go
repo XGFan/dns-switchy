@@ -20,4 +20,5 @@ type UpstreamConfig struct {
 type DnsConfig struct {
 	Bootstrap []string      `json:"bootstrap,omitempty"`
 	Timeout   time.Duration `json:"timeout,omitempty"`
+	ClientIP  string        `json:"clientIP,omitempty"`
 }
