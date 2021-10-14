@@ -13,7 +13,11 @@ import (
 
 func main() {
 	file := flag.String("c", "config.yaml", "config location")
+	ts := flag.Bool("x", false, "show timestamp in log")
 	flag.Parse()
+	if !*ts {
+		log.SetFlags(0)
+	}
 	log.Printf("Config: %s", *file)
 	executable, e := os.Executable()
 	if e == nil {
