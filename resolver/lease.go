@@ -29,7 +29,6 @@ func (lease Lease) String() string {
 }
 
 func checkAndUpdate(lease *Lease) {
-	log.Println(time.Now().Sub(lease._last).Seconds())
 	if time.Now().Sub(lease._last).Seconds() > 180 {
 		file, _ := os.ReadFile(lease.location)
 		cache := make(map[string]string, 0)
