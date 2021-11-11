@@ -13,7 +13,7 @@ func (f Filter) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
 	if question.Qtype == dns.TypeAAAA {
 		m := new(dns.Msg)
 		m.SetReply(msg)
-		m.Rcode = dns.RcodeNameError
+		m.Rcode = dns.RcodeSuccess
 		_ = writer.WriteMsg(m)
 		return true
 	} else {
