@@ -58,6 +58,7 @@ func parseRule(rules []string) []string {
 func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l := make([]DnsResolver, 0)
 	l = append(l, Hosts(conf.Host))
+	l = append(l, Filter{})
 	needFallback := true
 	for _, conf := range conf.Upstream {
 		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
