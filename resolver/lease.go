@@ -3,7 +3,6 @@ package resolver
 import (
 	"fmt"
 	"github.com/miekg/dns"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -41,7 +40,6 @@ func checkAndUpdate(lease *Lease) {
 				}
 			}
 		}
-		log.Printf("update lease cache, size: %d", len(cache))
 		lease._cache = cache
 		lease._last = time.Now()
 	}
