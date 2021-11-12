@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 )
 
 type DnsResolver interface {
@@ -17,7 +18,14 @@ type UpstreamDNS struct {
 	Name string
 	upstream.Upstream
 	matcher.Matcher
-	clientIP string
+	clientIP   string
+	cache      map[dns.Question]CacheItem
+	cacheLimit int
+}
+
+type CacheItem struct {
+	validBefore time.Time
+	item        *dns.Msg
 }
 
 func (upstreamDNS *UpstreamDNS) String() string {
@@ -25,32 +33,67 @@ func (upstreamDNS *UpstreamDNS) String() string {
 }
 
 func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
-	question := msg.Question[0]
-	domain := strings.TrimRight(question.Name, ".")
+	domain := strings.TrimRight(msg.Question[0].Name, ".")
 	if upstreamDNS.Match(domain) {
-		upstreamDNS.forwarded(writer, msg)
+		err := upstreamDNS.forwarded(writer, msg)
+		if err != nil {
+			log.Printf("upstream [%s] error: %v\n", upstreamDNS.Name, err)
+		}
 		return true
 	}
 	return false
 }
 
-func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Msg) {
+func (upstreamDNS *UpstreamDNS) checkCache(question *dns.Question) *dns.Msg {
+	c, exist := upstreamDNS.cache[*question]
+	if upstreamDNS.cache != nil && len(upstreamDNS.cache) > upstreamDNS.cacheLimit {
+		go func() {
+			before := len(upstreamDNS.cache)
+			for d, item := range upstreamDNS.cache {
+				if item.validBefore.Before(time.Now()) {
+					delete(upstreamDNS.cache, d)
+				}
+			}
+			after := len(upstreamDNS.cache)
+			log.Printf("upstream [%s] clean cache: from %d to %d", upstreamDNS.Name, before, after)
+			if after > upstreamDNS.cacheLimit {
+				log.Printf("upstream [%s] hint cache limit: resize %d to %d", upstreamDNS.Name,
+					upstreamDNS.cacheLimit,
+					upstreamDNS.cacheLimit*2)
+				upstreamDNS.cacheLimit *= 2
+			}
+		}()
+	}
+	if exist && c.validBefore.After(time.Now()) {
+		return c.item
+	}
+	return nil
+}
+
+func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Msg) error {
+	question := msg.Question[0]
+	cache := upstreamDNS.checkCache(&question)
+	if cache != nil {
+		cache.SetReply(msg)
+		return writer.WriteMsg(cache)
+	}
 	log.Printf("[%s] recv [%s]: %s %s", upstreamDNS.Name,
 		writer.RemoteAddr(),
-		dns.TypeToString[msg.Question[0].Qtype],
-		msg.Question[0].Name)
+		dns.TypeToString[question.Qtype],
+		question.Name)
 	if upstreamDNS.clientIP != "" {
 		setECS(msg, net.ParseIP(upstreamDNS.clientIP))
 	}
 	resp, err := upstreamDNS.Exchange(msg)
 	if err != nil {
-		log.Printf("upstream error: %v", err)
+		return err
 	} else {
-		//log.Printf("\n---resp start---\n %v\n---resp end---", resp)
-		err := writer.WriteMsg(resp)
-		if err != nil {
-			log.Printf("write error: %v", err)
+		upstreamDNS.cache[question] = CacheItem{
+			validBefore: time.Now().Add(time.Second * 60),
+			item:        resp,
 		}
+		//log.Printf("\n---resp start---\n %v\n---resp end---", resp)
+		return writer.WriteMsg(resp)
 	}
 }
 

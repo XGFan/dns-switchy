@@ -29,7 +29,12 @@ func (lease Lease) String() string {
 
 func checkAndUpdate(lease *Lease) {
 	if time.Now().Sub(lease._last).Seconds() > 180 {
-		file, _ := os.ReadFile(lease.location)
+		file, e := os.ReadFile(lease.location)
+		if e != nil {
+			lease._cache = make(map[string]string, 0)
+			lease._last = time.Now()
+			return
+		}
 		cache := make(map[string]string, 0)
 		for _, line := range strings.Split(string(file), "\n") {
 			if line != "" {

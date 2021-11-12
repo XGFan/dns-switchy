@@ -5,6 +5,7 @@ import (
 	"dns-switchy/config"
 	"dns-switchy/matcher"
 	"github.com/AdguardTeam/dnsproxy/upstream"
+	"github.com/miekg/dns"
 	"io"
 	"log"
 	"net/http"
@@ -69,23 +70,18 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 		if err != nil {
 			log.Printf("init upstream fail: %+v", err)
 		}
-		parsed := parseRule(conf.Rule)
-		if len(parsed) == 0 {
-			l = append(l, &UpstreamDNS{
-				Name:     conf.Name,
-				Upstream: up,
-				Matcher:  matcher.AcceptAll,
-				clientIP: conf.Config.ClientIP,
-			})
-			needFallback = false
-		} else {
-			l = append(l, &UpstreamDNS{
-				Name:     conf.Name,
-				Upstream: up,
-				Matcher:  matcher.NewDomainSet(parsed),
-				clientIP: conf.Config.ClientIP,
-			})
+		ups := &UpstreamDNS{
+			Name:       conf.Name,
+			Upstream:   up,
+			Matcher:    matcher.NewMatcher(parseRule(conf.Rule)),
+			clientIP:   conf.Config.ClientIP,
+			cache:      make(map[dns.Question]CacheItem, 0),
+			cacheLimit: 512,
 		}
+		if ups.Matcher == matcher.AcceptAll {
+			needFallback = false
+		}
+		l = append(l, ups)
 	}
 	if needFallback {
 		log.Fatalln("need a upstream as fall back")
