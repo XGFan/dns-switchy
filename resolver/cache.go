@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+type Cache interface {
+	Write(q *dns.Question, msg *dns.Msg)
+	Get(q *dns.Question) *dns.Msg
+}
+type NoCache struct {
+}
+
+func (n NoCache) Write(q *dns.Question, msg *dns.Msg) {
+}
+
+func (n NoCache) Get(q *dns.Question) *dns.Msg {
+	return nil
+}
+
 type DnsCache struct {
 	ttl           time.Duration
 	cleanInterval time.Duration
@@ -14,7 +28,7 @@ type DnsCache struct {
 }
 type CacheItem struct {
 	validBefore time.Time
-	item        *dns.Msg
+	item        dns.Msg
 }
 
 type WriteTask struct {
@@ -25,7 +39,7 @@ type WriteTask struct {
 func (dnsCache *DnsCache) Get(q *dns.Question) *dns.Msg {
 	c, exist := dnsCache.cache[*q]
 	if exist && c.validBefore.After(time.Now()) {
-		return c.item
+		return &c.item
 	}
 	return nil
 }
@@ -44,7 +58,7 @@ func (dnsCache *DnsCache) writeAndClean() {
 		case task := <-dnsCache.writeChan:
 			dnsCache.cache[*task.question] = CacheItem{
 				validBefore: time.Now().Add(dnsCache.ttl),
-				item:        task.msg,
+				item:        *task.msg,
 			}
 		case <-tick:
 			before := len(dnsCache.cache)
@@ -59,11 +73,14 @@ func (dnsCache *DnsCache) writeAndClean() {
 	}
 }
 
-func NewDnsCache(ttl time.Duration, cleanInterval time.Duration) *DnsCache {
+func NewDnsCache(ttl time.Duration, cleanInterval time.Duration) Cache {
+	if ttl == 0 {
+		return &NoCache{}
+	}
 	dnsCache := &DnsCache{
 		ttl:           ttl,
 		cleanInterval: cleanInterval,
-		cache:         make(map[dns.Question]CacheItem),
+		cache:         make(map[dns.Question]CacheItem, 0),
 		writeChan:     make(chan WriteTask, 10),
 	}
 	go dnsCache.writeAndClean()

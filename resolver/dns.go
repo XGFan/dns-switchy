@@ -18,7 +18,7 @@ type UpstreamDNS struct {
 	upstream.Upstream
 	matcher.Matcher
 	clientIP string
-	cache    *DnsCache
+	cache    Cache
 }
 
 func (upstreamDNS *UpstreamDNS) String() string {

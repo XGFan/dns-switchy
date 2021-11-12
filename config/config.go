@@ -7,7 +7,12 @@ import (
 type SwitchyConfig struct {
 	Port     int               `json:"port,omitempty"`
 	Host     map[string]string `json:"host,omitempty"`
+	Cache    CacheConfig       `json:"cache"`
 	Upstream []UpstreamConfig  `json:"upstream,omitempty"`
+}
+
+type CacheConfig struct {
+	TTL time.Duration `json:"ttl,omitempty"`
 }
 
 type UpstreamConfig struct {

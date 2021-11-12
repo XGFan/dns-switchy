@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 func parseRule(rules []string) []string {
@@ -62,7 +61,7 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l = append(l, NewAAAAFilter())
 	l = append(l, NewDefaultLease())
 	needFallback := true
-	dnsCache := NewDnsCache(time.Minute*5, time.Minute*5)
+	dnsCache := NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
 	for _, conf := range conf.Upstream {
 		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
 			Bootstrap: conf.Config.Bootstrap,
