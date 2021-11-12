@@ -26,11 +26,15 @@ func (upstreamDNS *UpstreamDNS) String() string {
 }
 
 func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
-	domain := strings.TrimRight(msg.Question[0].Name, ".")
+	question := msg.Question[0]
+	domain := strings.TrimRight(question.Name, ".")
 	if upstreamDNS.Match(domain) {
 		err := upstreamDNS.forwarded(writer, msg)
 		if err != nil {
-			log.Printf("[%s] fail %s : %v\n", upstreamDNS.Name, msg.Question[0].String(), err)
+			log.Printf("[%s] fail [%s]: %s %s \n cause by%v", upstreamDNS.Name, writer.RemoteAddr(),
+				dns.TypeToString[question.Qtype],
+				question.Name,
+				err)
 		}
 		return true
 	}
