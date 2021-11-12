@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"strings"
-	"time"
 )
 
 type DnsResolver interface {
@@ -18,14 +17,8 @@ type UpstreamDNS struct {
 	Name string
 	upstream.Upstream
 	matcher.Matcher
-	clientIP   string
-	cache      map[dns.Question]CacheItem
-	cacheLimit int
-}
-
-type CacheItem struct {
-	validBefore time.Time
-	item        *dns.Msg
+	clientIP string
+	cache    *DnsCache
 }
 
 func (upstreamDNS *UpstreamDNS) String() string {
@@ -44,38 +37,12 @@ func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Ms
 	return false
 }
 
-func (upstreamDNS *UpstreamDNS) checkCache(question *dns.Question) *dns.Msg {
-	c, exist := upstreamDNS.cache[*question]
-	if upstreamDNS.cache != nil && len(upstreamDNS.cache) > upstreamDNS.cacheLimit {
-		go func() {
-			before := len(upstreamDNS.cache)
-			for d, item := range upstreamDNS.cache {
-				if item.validBefore.Before(time.Now()) {
-					delete(upstreamDNS.cache, d)
-				}
-			}
-			after := len(upstreamDNS.cache)
-			log.Printf("upstream [%s] clean cache: from %d to %d", upstreamDNS.Name, before, after)
-			if after > upstreamDNS.cacheLimit {
-				log.Printf("upstream [%s] hint cache limit: resize %d to %d", upstreamDNS.Name,
-					upstreamDNS.cacheLimit,
-					upstreamDNS.cacheLimit*2)
-				upstreamDNS.cacheLimit *= 2
-			}
-		}()
-	}
-	if exist && c.validBefore.After(time.Now()) {
-		return c.item
-	}
-	return nil
-}
-
 func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Msg) error {
 	question := msg.Question[0]
-	cache := upstreamDNS.checkCache(&question)
-	if cache != nil {
-		cache.SetReply(msg)
-		return writer.WriteMsg(cache)
+	cacheMsg := upstreamDNS.cache.Get(&question)
+	if cacheMsg != nil {
+		cacheMsg.SetReply(msg)
+		return writer.WriteMsg(cacheMsg)
 	}
 	log.Printf("[%s] recv [%s]: %s %s", upstreamDNS.Name,
 		writer.RemoteAddr(),
@@ -88,10 +55,7 @@ func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Ms
 	if err != nil {
 		return err
 	} else {
-		upstreamDNS.cache[question] = CacheItem{
-			validBefore: time.Now().Add(time.Second * 60),
-			item:        resp,
-		}
+		upstreamDNS.cache.Write(&question, resp)
 		//log.Printf("\n---resp start---\n %v\n---resp end---", resp)
 		return writer.WriteMsg(resp)
 	}
