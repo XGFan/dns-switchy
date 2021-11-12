@@ -30,7 +30,7 @@ func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Ms
 	if upstreamDNS.Match(domain) {
 		err := upstreamDNS.forwarded(writer, msg)
 		if err != nil {
-			log.Printf("upstream [%s] error: %v\n", upstreamDNS.Name, err)
+			log.Printf("[%s] error on %v : %v\n", upstreamDNS.Name, msg.Question[0], err)
 		}
 		return true
 	}
