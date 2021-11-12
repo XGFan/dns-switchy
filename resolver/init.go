@@ -57,8 +57,8 @@ func parseRule(rules []string) []string {
 
 func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l := make([]DnsResolver, 0)
-	l = append(l, Hosts(conf.Host))
 	l = append(l, NewAAAAFilter())
+	l = append(l, Hosts(conf.Host))
 	l = append(l, NewDefaultLease())
 	needFallback := true
 	dnsCache := NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
