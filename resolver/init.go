@@ -58,10 +58,9 @@ func parseRule(rules []string) []string {
 func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l := make([]DnsResolver, 0)
 	l = append(l, NewAAAAFilter())
-	l = append(l, Hosts(conf.Host))
+	l = append(l, NewHosts(conf.Host))
 	l = append(l, NewDefaultLease())
 	needFallback := true
-	dnsCache := NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
 	for _, conf := range conf.Upstream {
 		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
 			Bootstrap: conf.Config.Bootstrap,
@@ -75,7 +74,6 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 			Upstream: up,
 			Matcher:  matcher.NewMatcher(parseRule(conf.Rule)),
 			clientIP: conf.Config.ClientIP,
-			cache:    dnsCache,
 		}
 		if ups.Matcher == matcher.AcceptAll {
 			needFallback = false

@@ -1,19 +1,20 @@
 package resolver
 
 import (
+	"fmt"
 	"github.com/miekg/dns"
 	"log"
 	"time"
 )
 
 type Cache interface {
-	Write(q *dns.Question, msg *dns.Msg)
+	Set(q *dns.Question, msg *dns.Msg)
 	Get(q *dns.Question) *dns.Msg
 }
 type NoCache struct {
 }
 
-func (n NoCache) Write(q *dns.Question, msg *dns.Msg) {
+func (n NoCache) Set(q *dns.Question, msg *dns.Msg) {
 }
 
 func (n NoCache) Get(q *dns.Question) *dns.Msg {
@@ -26,6 +27,11 @@ type DnsCache struct {
 	cache         map[dns.Question]CacheItem
 	writeChan     chan WriteTask
 }
+
+func (dnsCache *DnsCache) String() string {
+	return fmt.Sprintf("Cache(TTL: %s)", dnsCache.ttl)
+}
+
 type CacheItem struct {
 	validBefore time.Time
 	item        dns.Msg
@@ -44,7 +50,7 @@ func (dnsCache *DnsCache) Get(q *dns.Question) *dns.Msg {
 	return nil
 }
 
-func (dnsCache *DnsCache) Write(q *dns.Question, msg *dns.Msg) {
+func (dnsCache *DnsCache) Set(q *dns.Question, msg *dns.Msg) {
 	dnsCache.writeChan <- WriteTask{
 		question: q,
 		msg:      msg,

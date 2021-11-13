@@ -6,27 +6,28 @@ import (
 )
 
 type Filter struct {
-	queryType []uint16
+	queryType map[uint16]struct{}
 }
 
 func NewAAAAFilter() *Filter {
-	return &Filter{queryType: []uint16{dns.TypeAAAA}}
+	return &Filter{queryType: map[uint16]struct{}{dns.TypeAAAA: {}}}
 }
 
 func (f Filter) String() string {
-	return fmt.Sprintf("TypeFilter(%d)", f.queryType)
+	strings := make([]string, 0)
+	for t := range f.queryType {
+		strings = append(strings, dns.TypeToString[t])
+	}
+	return fmt.Sprintf("TypeFilter(%s)", strings)
 }
 
-func (f *Filter) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
-	question := msg.Question[0]
-	for _, t := range f.queryType {
-		if question.Qtype == t {
-			m := new(dns.Msg)
-			m.SetReply(msg)
-			m.Rcode = dns.RcodeSuccess
-			_ = writer.WriteMsg(m)
-			return true
-		}
-	}
-	return false
+func (f *Filter) Accept(msg *dns.Msg) bool {
+	_, exist := f.queryType[msg.Question[0].Qtype]
+	return exist
+}
+
+func (f *Filter) Resolve(msg *dns.Msg) (*dns.Msg, error) {
+	m := new(dns.Msg)
+	m.SetReply(msg)
+	return m, nil
 }

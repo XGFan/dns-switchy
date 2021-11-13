@@ -12,15 +12,23 @@ import (
 type Lease struct {
 	location string
 	domain   string
-	_cache   map[string]string
-	_last    time.Time
+	cache    map[string]string
 }
 
 func NewLease(leaseLocation string, searchDomain string) *Lease {
-	return &Lease{
+	lease := &Lease{
 		location: leaseLocation,
 		domain:   searchDomain,
 	}
+	lease.update()
+	go func() {
+		tick := time.Tick(time.Minute * 3)
+		for {
+			<-tick
+			lease.update()
+		}
+	}()
+	return lease
 }
 
 func NewDefaultLease() *Lease {
@@ -31,46 +39,43 @@ func (lease Lease) String() string {
 	return fmt.Sprintf("DHCP.Lease(Location: %s, Domain: %s)", lease.location, lease.domain)
 }
 
-func checkAndUpdate(lease *Lease) {
-	if time.Now().Sub(lease._last).Seconds() > 180 {
-		file, e := os.ReadFile(lease.location)
-		if e != nil {
-			lease._cache = make(map[string]string, 0)
-			lease._last = time.Now()
-			return
-		}
-		cache := make(map[string]string, 0)
-		for _, line := range strings.Split(string(file), "\n") {
-			if line != "" {
-				parts := strings.Split(line, " ")
-				if len(parts) == 5 && parts[3] != "*" {
-					cache[strings.ToLower(parts[3]+".")] = parts[2]
-					cache[strings.ToLower(parts[3]+"."+lease.domain+".")] = parts[2]
-				}
+func (lease *Lease) update() {
+	file, e := os.ReadFile(lease.location)
+	if e != nil {
+		return
+	}
+	cache := make(map[string]string, 0)
+	for _, line := range strings.Split(string(file), "\n") {
+		if line != "" {
+			parts := strings.Split(line, " ")
+			if len(parts) == 5 && parts[3] != "*" {
+				cache[strings.ToLower(dns.Fqdn(parts[3]))] = parts[2]
+				cache[strings.ToLower(dns.Fqdn(parts[3]+"."+lease.domain))] = parts[2]
 			}
 		}
-		lease._cache = cache
-		lease._last = time.Now()
 	}
+	lease.cache = cache
 }
 
-func (lease *Lease) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
+func (lease *Lease) Accept(msg *dns.Msg) bool {
 	question := msg.Question[0]
 	if question.Qtype == dns.TypeA {
-		checkAndUpdate(lease)
-		ip, exist := lease._cache[strings.ToLower(question.Name)]
-		if exist {
-			rr := &dns.A{
-				Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
-				A:   net.ParseIP(ip),
-			}
-			m := new(dns.Msg)
-			m.SetReply(msg)
-			m.Rcode = dns.RcodeSuccess
-			m.Answer = append(m.Answer, rr)
-			_ = writer.WriteMsg(m)
-			return true
-		}
+		_, exist := lease.cache[strings.ToLower(question.Name)]
+		return exist
 	}
 	return false
+}
+
+func (lease *Lease) Resolve(msg *dns.Msg) (*dns.Msg, error) {
+	question := msg.Question[0]
+	ip := lease.cache[strings.ToLower(question.Name)]
+	rr := &dns.A{
+		Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
+		A:   net.ParseIP(ip),
+	}
+	m := new(dns.Msg)
+	m.SetReply(msg)
+	m.Rcode = dns.RcodeSuccess
+	m.Answer = append(m.Answer, rr)
+	return m, nil
 }

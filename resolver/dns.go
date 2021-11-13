@@ -4,13 +4,13 @@ import (
 	"dns-switchy/matcher"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
-	"log"
 	"net"
 	"strings"
 )
 
 type DnsResolver interface {
-	HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool
+	Accept(msg *dns.Msg) bool
+	Resolve(msg *dns.Msg) (*dns.Msg, error)
 }
 
 type UpstreamDNS struct {
@@ -18,53 +18,23 @@ type UpstreamDNS struct {
 	upstream.Upstream
 	matcher.Matcher
 	clientIP string
-	cache    Cache
 }
 
 func (upstreamDNS *UpstreamDNS) String() string {
 	return upstreamDNS.Name
 }
 
-func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
+func (upstreamDNS *UpstreamDNS) Accept(msg *dns.Msg) bool {
 	question := msg.Question[0]
 	domain := strings.TrimRight(question.Name, ".")
-	if upstreamDNS.Match(domain) {
-		err := upstreamDNS.forwarded(writer, msg)
-		if err != nil {
-			log.Printf("[%s] fail [%s]: %s %s, %s", upstreamDNS.Name,
-				writer.RemoteAddr(),
-				dns.TypeToString[question.Qtype],
-				question.Name,
-				err)
-		} else {
-			log.Printf("[%s] [%s]: %s %s %d", upstreamDNS.Name,
-				writer.RemoteAddr(),
-				dns.TypeToString[question.Qtype],
-				question.Name)
-		}
-		return true
-	}
-	return false
+	return upstreamDNS.Match(domain)
 }
 
-func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Msg) error {
-	question := msg.Question[0]
-	cacheMsg := upstreamDNS.cache.Get(&question)
-	if cacheMsg != nil {
-		cacheMsg.SetReply(msg)
-		return writer.WriteMsg(cacheMsg)
-	}
+func (upstreamDNS *UpstreamDNS) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	if upstreamDNS.clientIP != "" {
 		setECS(msg, net.ParseIP(upstreamDNS.clientIP))
 	}
-	resp, err := upstreamDNS.Exchange(msg)
-	if err != nil {
-		return err
-	} else {
-		upstreamDNS.cache.Write(&question, resp)
-		//log.Printf("\n---resp start---\n %v\n---resp end---", resp)
-		return writer.WriteMsg(resp)
-	}
+	return upstreamDNS.Exchange(msg)
 }
 
 var ednsCSDefaultNetmaskV4 uint8 = 24  // default network mask for IPv4 address for EDNS ClientSubnet option

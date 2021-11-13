@@ -3,49 +3,42 @@ package resolver
 import (
 	"fmt"
 	"github.com/miekg/dns"
-	"log"
 	"net"
-	"strings"
 )
 
 type Hosts map[string]string
+
+func NewHosts(m map[string]string) Hosts {
+	hosts := make(Hosts, 0)
+	for k, v := range m {
+		if k != "" && v != "" {
+			hosts[dns.Fqdn(k)] = v
+		}
+	}
+	return hosts
+}
 
 func (h Hosts) String() string {
 	return fmt.Sprintf("Hosts(%d)", len(h))
 }
 
-func (h Hosts) HandleDns(writer dns.ResponseWriter, msg *dns.Msg) bool {
+func (h Hosts) Accept(msg *dns.Msg) bool {
 	question := msg.Question[0]
-	if question.Qtype == dns.TypeA || question.Qtype == dns.TypeAAAA {
-		domain := strings.TrimRight(question.Name, ".")
-		resp, exist := h[domain]
-		if exist {
-			log.Printf("[%s] recv [%s]: %s %s", "Hosts",
-				writer.RemoteAddr(),
-				dns.TypeToString[msg.Question[0].Qtype],
-				msg.Question[0].Name)
-			var rr dns.RR
-			if question.Qtype == dns.TypeA {
-				rr = &dns.A{
-					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
-					A:   net.ParseIP(resp),
-				}
-			} else {
-				rr = &dns.AAAA{
-					Hdr:  dns.RR_Header{Name: question.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0},
-					AAAA: net.ParseIP(resp),
-				}
-			}
-			m := new(dns.Msg)
-			m.SetReply(msg)
-			m.Answer = append(m.Answer, rr)
-			err := writer.WriteMsg(m)
-			if err != nil {
-				//just let it fail
-				return true
-			}
-			return true
-		}
+	if question.Qtype == dns.TypeA {
+		_, exist := h[question.Name]
+		return exist
 	}
 	return false
+}
+
+func (h Hosts) Resolve(msg *dns.Msg) (*dns.Msg, error) {
+	question := msg.Question[0]
+	rr := &dns.A{
+		Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET},
+		A:   net.ParseIP(h[question.Name]),
+	}
+	m := new(dns.Msg)
+	m.SetReply(msg)
+	m.Answer = append(m.Answer, rr)
+	return m, nil
 }
