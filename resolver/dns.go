@@ -31,10 +31,16 @@ func (upstreamDNS *UpstreamDNS) HandleDns(writer dns.ResponseWriter, msg *dns.Ms
 	if upstreamDNS.Match(domain) {
 		err := upstreamDNS.forwarded(writer, msg)
 		if err != nil {
-			log.Printf("[%s] fail [%s]: %s %s, %s", upstreamDNS.Name, writer.RemoteAddr(),
+			log.Printf("[%s] fail [%s]: %s %s, %s", upstreamDNS.Name,
+				writer.RemoteAddr(),
 				dns.TypeToString[question.Qtype],
 				question.Name,
 				err)
+		} else {
+			log.Printf("[%s] [%s]: %s %s %d", upstreamDNS.Name,
+				writer.RemoteAddr(),
+				dns.TypeToString[question.Qtype],
+				question.Name)
 		}
 		return true
 	}
@@ -48,10 +54,6 @@ func (upstreamDNS *UpstreamDNS) forwarded(writer dns.ResponseWriter, msg *dns.Ms
 		cacheMsg.SetReply(msg)
 		return writer.WriteMsg(cacheMsg)
 	}
-	log.Printf("[%s] recv [%s]: %s %s", upstreamDNS.Name,
-		writer.RemoteAddr(),
-		dns.TypeToString[question.Qtype],
-		question.Name)
 	if upstreamDNS.clientIP != "" {
 		setECS(msg, net.ParseIP(upstreamDNS.clientIP))
 	}

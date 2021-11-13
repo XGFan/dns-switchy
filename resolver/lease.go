@@ -16,11 +16,15 @@ type Lease struct {
 	_last    time.Time
 }
 
-func NewDefaultLease() *Lease {
+func NewLease(leaseLocation string, searchDomain string) *Lease {
 	return &Lease{
-		location: "/tmp/dhcp.leases",
-		domain:   "lan",
+		location: leaseLocation,
+		domain:   searchDomain,
 	}
+}
+
+func NewDefaultLease() *Lease {
+	return NewLease("/tmp/dhcp.leases", "lan")
 }
 
 func (lease Lease) String() string {
