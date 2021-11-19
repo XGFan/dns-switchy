@@ -6,11 +6,15 @@ import (
 	"dns-switchy/matcher"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 )
+
+var BasePath string
 
 func parseRule(rules []string) []string {
 	parsedRules := make([]string, 0)
@@ -30,7 +34,13 @@ func parseRule(rules []string) []string {
 						reader = resp.Body
 					}
 				} else {
-					open, err := os.Open(target)
+					var open fs.File
+					var err error
+					if BasePath != "" && !path.IsAbs(target) {
+						open, err = os.DirFS(BasePath).Open(target)
+					} else {
+						open, err = os.Open(target)
+					}
 					if err != nil {
 						log.Printf("Read %s fail: %s", target, err)
 						reader = io.NopCloser(bytes.NewReader(nil))

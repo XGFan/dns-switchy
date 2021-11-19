@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -33,6 +34,7 @@ func main() {
 	}
 	open, err := os.Open(*file)
 	passOrFatal(err)
+	resolver.BasePath = filepath.Dir(open.Name())
 	conf := new(config.SwitchyConfig)
 	err = yaml.NewDecoder(open).Decode(conf)
 	passOrFatal(err)
