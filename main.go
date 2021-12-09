@@ -58,7 +58,9 @@ func main() {
 						if err != nil {
 							wrapWriter.fail(upstream, err)
 						} else {
-							dnsCache.Set(&msg.Question[0], resp)
+							if resp.Rcode == dns.RcodeSuccess {
+								dnsCache.Set(&msg.Question[0], resp)
+							}
 							wrapWriter.success(upstream, resp)
 						}
 						return
@@ -97,8 +99,13 @@ func (w *wrapWriter) success(name interface{}, resp *dns.Msg) {
 		Time:     time.Now().UnixMilli() - w.start,
 		Question: fmt.Sprintf("%s %s", dns.TypeToString[w.msg.Question[0].Qtype], w.msg.Question[0].Name),
 	}
-	json.NewEncoder(log.Writer()).Encode(structureLog)
-	resp.SetReply(w.msg)
+	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
+	resp.Id = w.msg.Id
+	resp.Opcode = w.msg.Opcode
+	if resp.Opcode == dns.OpcodeQuery {
+		resp.RecursionDesired = w.msg.RecursionDesired // Copy rd bit
+		resp.CheckingDisabled = w.msg.CheckingDisabled // Copy cd bit
+	}
 	_ = w.writer.WriteMsg(resp)
 }
 
