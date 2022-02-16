@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 	"github.com/miekg/dns"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -13,18 +14,22 @@ type Lease struct {
 	location string
 	domain   string
 	cache    map[string]string
+	ticker   *time.Ticker
+}
+
+func (lease Lease) Close() {
+	lease.ticker.Stop()
+	log.Printf("%s closed", lease)
 }
 
 func NewLease(leaseLocation string, searchDomain string) *Lease {
 	lease := &Lease{
 		location: leaseLocation,
 		domain:   searchDomain,
+		ticker:   time.NewTicker(time.Minute * 3),
 	}
-	lease.update()
 	go func() {
-		tick := time.Tick(time.Minute * 3)
-		for {
-			<-tick
+		for range lease.ticker.C {
 			lease.update()
 		}
 	}()

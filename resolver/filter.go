@@ -3,10 +3,15 @@ package resolver
 import (
 	"fmt"
 	"github.com/miekg/dns"
+	"log"
 )
 
 type Filter struct {
 	queryType map[uint16]struct{}
+}
+
+func (f Filter) Close() {
+	log.Printf("%s closed", f)
 }
 
 func NewAAAAFilter() *Filter {

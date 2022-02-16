@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"github.com/miekg/dns"
 	"gopkg.in/yaml.v2"
 	"log"
@@ -16,13 +17,7 @@ import (
 	"time"
 )
 
-func main() {
-	file := flag.String("c", "config.yaml", "config location")
-	ts := flag.Bool("x", false, "show timestamp in log")
-	flag.Parse()
-	if !*ts {
-		log.SetFlags(0)
-	}
+func parseConf(file *string) *config.SwitchyConfig {
 	log.Printf("Config: %s", *file)
 	executable, e := os.Executable()
 	if e == nil {
@@ -38,9 +33,28 @@ func main() {
 	conf := new(config.SwitchyConfig)
 	err = yaml.NewDecoder(open).Decode(conf)
 	passOrFatal(err)
+	return conf
+}
+
+type DnsServer struct {
+	*dns.Server
+	resolvers []resolver.DnsResolver
+	dnsCache  resolver.Cache
+}
+
+func (s DnsServer) Shutdown() {
+	_ = s.Server.Shutdown()
+	for _, dnsResolver := range s.resolvers {
+		dnsResolver.Close()
+	}
+	s.dnsCache.Close()
+}
+
+func startServer(conf *config.SwitchyConfig) DnsServer {
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
 	resolvers := resolver.Init(conf)
 	dnsCache := resolver.NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
+	dnsServer := DnsServer{&server, resolvers, dnsCache}
 	log.Printf("Started at %d, with %s", conf.Port, resolvers)
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		if checkAndUnify(msg) != nil {
@@ -69,7 +83,50 @@ func main() {
 			}
 		}()
 	})
-	passOrFatal(server.ListenAndServe())
+	return dnsServer
+}
+
+func main() {
+	file := flag.String("c", "config.yaml", "config location")
+	ts := flag.Bool("x", false, "show timestamp in log")
+	flag.Parse()
+	if !*ts {
+		log.SetFlags(0)
+	}
+	var server DnsServer
+	watcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		err = watcher.Add(*file)
+		if err == nil {
+			log.Printf("Watching %s", *file)
+			go func() {
+				for {
+					select {
+					case event, ok := <-watcher.Events:
+						if ok && event.Op&fsnotify.Write == fsnotify.Write {
+							log.Println("event:", event)
+							log.Println("modified file:", event.Name)
+							server.Shutdown()
+						}
+					case err, ok := <-watcher.Errors:
+						if !ok {
+							return
+						}
+						log.Println("error:", err)
+					}
+				}
+			}()
+		}
+	}
+	defer watcher.Close()
+	for {
+		conf := parseConf(file)
+		server = startServer(conf)
+		err := server.ListenAndServe()
+		if err != nil {
+			log.Println(err)
+		}
+	}
 }
 
 func checkAndUnify(msg *dns.Msg) error {

@@ -4,11 +4,13 @@ import (
 	"dns-switchy/matcher"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
+	"log"
 	"net"
 	"strings"
 )
 
 type DnsResolver interface {
+	Close()
 	Accept(msg *dns.Msg) bool
 	Resolve(msg *dns.Msg) (*dns.Msg, error)
 }
@@ -18,6 +20,10 @@ type UpstreamDNS struct {
 	upstream.Upstream
 	matcher.Matcher
 	clientIP string
+}
+
+func (upstreamDNS *UpstreamDNS) Close() {
+	log.Printf("%s closed", upstreamDNS)
 }
 
 func (upstreamDNS *UpstreamDNS) String() string {

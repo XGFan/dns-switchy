@@ -14,6 +14,10 @@ import (
 
 type Hosts map[string]string
 
+func (h Hosts) Close() {
+	log.Printf("%s closed", h)
+}
+
 func (h Hosts) loadSystemHosts() {
 	var hostLocation string
 	if runtime.GOOS == "windows" {
