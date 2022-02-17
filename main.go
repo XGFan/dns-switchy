@@ -15,20 +15,23 @@ func main() {
 	}
 	var server DnsServer
 	server.Init(file)
-	watchConfigFile(file, server.Reload)
+	defer watchConfigFile(file, server.Reload)()
 	server.Run()
 }
 
-func watchConfigFile(file *string, action func(*string)) {
+func watchConfigFile(file *string, action func(*string)) func() {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("Can not create watcher: %s", err)
-		return
+		return func() {
+		}
 	}
 	err = watcher.Add(*file)
 	if err != nil {
 		log.Printf("Can not watch file %s, Error: %s", *file, err)
-		return
+		return func() {
+
+		}
 	}
 	log.Printf("Watching %s", *file)
 	go func() {
@@ -42,4 +45,7 @@ func watchConfigFile(file *string, action func(*string)) {
 			}
 		}
 	}()
+	return func() {
+		watcher.Close()
+	}
 }
