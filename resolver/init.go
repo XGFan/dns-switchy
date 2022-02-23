@@ -73,8 +73,9 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 	needFallback := true
 	for _, conf := range conf.Upstream {
 		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
-			Bootstrap: conf.Config.Bootstrap,
-			Timeout:   conf.Config.Timeout,
+			Bootstrap:     conf.Config.Bootstrap,
+			Timeout:       conf.Config.Timeout,
+			ServerIPAddrs: conf.Config.ServerIP,
 		})
 		if err != nil {
 			log.Printf("init upstream fail: %+v", err)
