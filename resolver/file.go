@@ -147,8 +147,8 @@ func (h Hosts) Parse(content string) QueryMap {
 		if !strings.HasPrefix(line, "#") && strings.TrimSpace(line) != "" {
 			split := BlankSeparator.Split(line, -1)
 			ipStr := split[0]
-			if len(split) >= 2 {
-				for i := 1; i < len(split); i++ {
+			if len(split) > 1 {
+				for i := 1; i < len(split) && i <= 2; i++ {
 					inMemory.put(split[i], ipStr)
 				}
 			} else if len(split) != 0 {
