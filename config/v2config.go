@@ -2,6 +2,7 @@ package config
 
 import (
 	"gopkg.in/yaml.v2"
+	"io"
 	"log"
 	"time"
 )
@@ -17,8 +18,10 @@ type _SwitchyConfigV2 struct {
 type ResolverConfig interface {
 	Type() string
 }
+
 type FilterConfig struct {
-	Block []string `yaml:"block,omitempty"`
+	Block []string      `yaml:"block,omitempty"`
+	TTL   time.Duration `yaml:"ttl,omitempty"`
 }
 
 func (f FilterConfig) Type() string {
@@ -28,6 +31,7 @@ func (f FilterConfig) Type() string {
 type LeaseConfig struct {
 	Domain          string        `yaml:"domain,omitempty"`
 	Location        string        `yaml:"location,omitempty"`
+	TTL             time.Duration `yaml:"ttl,omitempty"`
 	RefreshInterval time.Duration `yaml:"refreshInterval,omitempty"`
 }
 
@@ -39,6 +43,7 @@ type HostConfig struct {
 	System          bool              `yaml:"system,omitempty"`
 	Location        string            `yaml:"location,omitempty"`
 	RefreshInterval time.Duration     `yaml:"refreshInterval,omitempty"`
+	TTL             time.Duration     `yaml:"ttl,omitempty"`
 	Hosts           map[string]string `yaml:"hosts,omitempty"`
 }
 
@@ -47,26 +52,20 @@ func (h HostConfig) Type() string {
 }
 
 type ForwardConfig struct {
-	Name   string    `yaml:"name,omitempty"`
-	Url    string    `yaml:"url,omitempty"`
-	Rule   []string  `yaml:"rule,omitempty"`
-	Config DnsConfig `yaml:"config,omitempty"`
+	Name   string        `yaml:"name,omitempty"`
+	TTL    time.Duration `yaml:"ttl,omitempty"`
+	Url    string        `yaml:"url,omitempty"`
+	Rule   []string      `yaml:"rule,omitempty"`
+	Config DnsConfig     `yaml:"config,omitempty"`
 }
 
 func (f ForwardConfig) Type() string {
 	return "forward"
 }
 
-type XXX map[string]interface{}
-
-type GenericConfig struct {
-	XXX  `yaml:"-"`
-	Type string `yaml:"type,omitempty"`
-}
-
-func parse(content string) *SwitchyConfigV2 {
+func ParseV2(filePath io.Reader) *SwitchyConfigV2 {
 	_v2 := _SwitchyConfigV2{}
-	err := yaml.Unmarshal([]byte(content), &_v2)
+	err := yaml.NewDecoder(filePath).Decode(&_v2)
 	if err != nil {
 		return nil
 	}

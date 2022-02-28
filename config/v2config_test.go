@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,6 +27,7 @@ resolvers:
   - name: cn-dns
     type: forward
     url: 114.114.114.114:53
+    ttl: 10s
     rule:
       - llscdn.com
       - llsapp.com
@@ -42,7 +44,8 @@ resolvers:
       timeout: 5s
 `
 	t.Run("default", func(t *testing.T) {
-		got := parse(content)
+		stringReader := strings.NewReader(content)
+		got := ParseV2(stringReader)
 		target := &SwitchyConfigV2{
 			Port: 1053,
 			Resolvers: []ResolverConfig{
@@ -63,6 +66,7 @@ resolvers:
 				&ForwardConfig{
 					Name: "cn-dns",
 					Url:  "114.114.114.114:53",
+					TTL:  10 * time.Second,
 					Rule: []string{
 						"llscdn.com",
 						"llsapp.com",
