@@ -3,7 +3,7 @@ package resolver
 import (
 	"bytes"
 	"dns-switchy/config"
-	"dns-switchy/matcher"
+	"dns-switchy/util"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"io"
 	"io/fs"
@@ -83,10 +83,10 @@ func Init(conf *config.SwitchyConfig) []DnsResolver {
 		ups := &UpstreamDNS{
 			Name:     conf.Name,
 			Upstream: up,
-			Matcher:  matcher.NewMatcher(parseRule(conf.Rule)),
+			Matcher:  util.NewMatcher(parseRule(conf.Rule)),
 			clientIP: conf.Config.ClientIP,
 		}
-		if ups.Matcher == matcher.AcceptAll {
+		if ups.Matcher == util.AcceptAll {
 			needFallback = false
 		}
 		l = append(l, ups)

@@ -3,6 +3,7 @@ package main
 import (
 	"dns-switchy/config"
 	"dns-switchy/resolver"
+	"dns-switchy/util"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +38,7 @@ func parseConf(file *string) *config.SwitchyConfig {
 type DnsServer struct {
 	*dns.Server
 	resolvers []resolver.DnsResolver
-	dnsCache  resolver.Cache
+	dnsCache  util.Cache
 }
 
 func (s *DnsServer) Reload(file *string) {
@@ -57,7 +58,7 @@ func (s *DnsServer) Init(file *string) {
 	conf := parseConf(file)
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
 	resolvers := resolver.Init(conf)
-	dnsCache := resolver.NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
+	dnsCache := util.NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
 	log.Printf("Started at %d, with %s", conf.Port, resolvers)
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		if checkAndUnify(msg) != nil {

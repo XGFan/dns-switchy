@@ -1,7 +1,7 @@
 package resolver
 
 import (
-	"dns-switchy/matcher"
+	"dns-switchy/util"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
 	"log"
@@ -18,7 +18,7 @@ type DnsResolver interface {
 type UpstreamDNS struct {
 	Name string
 	upstream.Upstream
-	matcher.Matcher
+	util.Matcher
 	clientIP string
 }
 

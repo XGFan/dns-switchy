@@ -1,4 +1,4 @@
-package matcher
+package util
 
 import (
 	"bytes"
@@ -83,6 +83,7 @@ func NewDomainSet(domains []string) DomainSet {
 	}
 	return set
 }
+
 func NewMatcher(domains []string) Matcher {
 	if len(domains) > 0 {
 		return NewDomainSet(domains)

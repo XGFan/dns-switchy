@@ -1,4 +1,4 @@
-package matcher
+package util
 
 import (
 	"testing"
