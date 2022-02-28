@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/miekg/dns"
-	"gopkg.in/yaml.v2"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,7 +15,7 @@ import (
 	"time"
 )
 
-func parseConf(file *string) *config.SwitchyConfig {
+func readConfig(file *string) *config.SwitchyConfig {
 	log.Printf("Config: %s", *file)
 	executable, e := os.Executable()
 	if e == nil {
@@ -29,10 +28,7 @@ func parseConf(file *string) *config.SwitchyConfig {
 	open, err := os.Open(*file)
 	passOrFatal(err)
 	resolver.BasePath = filepath.Dir(open.Name())
-	conf := new(config.SwitchyConfig)
-	err = yaml.NewDecoder(open).Decode(conf)
-	passOrFatal(err)
-	return conf
+	return config.Parse(open)
 }
 
 type DnsServer struct {
@@ -54,12 +50,25 @@ func (s *DnsServer) Shutdown() {
 	s.dnsCache.Close()
 }
 
+func calcTTL(resolvers []resolver.DnsResolver) time.Duration {
+	minTTL := time.Duration(0)
+	for _, res := range resolvers {
+		if res.TTL() > 0 && (minTTL > res.TTL() || minTTL == 0) {
+			minTTL = res.TTL()
+		}
+	}
+	return minTTL
+}
+
 func (s *DnsServer) Init(file *string) {
-	conf := parseConf(file)
+	conf := readConfig(file)
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
 	resolvers := resolver.Init(conf)
-	dnsCache := util.NewDnsCache(conf.Cache.TTL, conf.Cache.TTL)
-	log.Printf("Started at %d, with %s", conf.Port, resolvers)
+	if conf.TTL == 0 {
+		conf.TTL = calcTTL(resolvers)
+	}
+	dnsCache := util.NewDnsCache(conf.TTL)
+	log.Printf("Started at %d, TTL: %s with %s", conf.Port, conf.TTL, resolvers)
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		if checkAndUnify(msg) != nil {
 			log.Printf("[%s] send invalid msg [%s]", writer.RemoteAddr(), msg.String())
@@ -70,14 +79,18 @@ func (s *DnsServer) Init(file *string) {
 				wrapWriter.success(dnsCache, cached)
 				return
 			} else {
-				for _, upstream := range resolvers {
+				for i, upstream := range resolvers {
 					if upstream.Accept(msg) {
 						resp, err := upstream.Resolve(msg)
 						if err != nil {
-							wrapWriter.fail(upstream, err)
+							if i < len(resolvers)-1 {
+								continue
+							} else {
+								wrapWriter.fail(upstream, err)
+							}
 						} else {
 							if resp.Rcode == dns.RcodeSuccess {
-								dnsCache.Set(&msg.Question[0], resp)
+								dnsCache.Set(&msg.Question[0], resp, upstream.TTL())
 							}
 							wrapWriter.success(upstream, resp)
 						}
@@ -138,7 +151,7 @@ func (w *wrapWriter) fail(name interface{}, err error) {
 		Question: fmt.Sprintf("%s %s", dns.TypeToString[w.msg.Question[0].Qtype], w.msg.Question[0].Name),
 		Error:    err,
 	}
-	json.NewEncoder(log.Writer()).Encode(structureLog)
+	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	resp := new(dns.Msg)
 	resp.SetRcode(w.msg, dns.RcodeServerFailure)
 	_ = w.writer.WriteMsg(resp)

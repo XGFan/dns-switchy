@@ -3,8 +3,8 @@ package resolver
 import (
 	"bytes"
 	"dns-switchy/config"
-	"dns-switchy/util"
-	"github.com/AdguardTeam/dnsproxy/upstream"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -67,32 +67,26 @@ func parseRule(rules []string) []string {
 
 func Init(conf *config.SwitchyConfig) []DnsResolver {
 	l := make([]DnsResolver, 0)
-	l = append(l, NewAAAAFilter())
-	l = append(l, NewHosts(conf.Host))
-	l = append(l, NewDefaultLease())
-	needFallback := true
-	for _, conf := range conf.Upstream {
-		up, err := upstream.AddressToUpstream(conf.Url, &upstream.Options{
-			Bootstrap:     conf.Config.Bootstrap,
-			Timeout:       conf.Config.Timeout,
-			ServerIPAddrs: conf.Config.ServerIP,
-		})
+	for _, resolverConfig := range conf.Resolvers {
+		resolver, err := createResolver(resolverConfig)
 		if err != nil {
-			log.Printf("init upstream fail: %+v", err)
+			log.Fatalln("create resolver fail", err)
+		} else {
+			l = append(l, resolver)
 		}
-		ups := &UpstreamDNS{
-			Name:     conf.Name,
-			Upstream: up,
-			Matcher:  util.NewMatcher(parseRule(conf.Rule)),
-			clientIP: conf.Config.ClientIP,
-		}
-		if ups.Matcher == util.AcceptAll {
-			needFallback = false
-		}
-		l = append(l, ups)
-	}
-	if needFallback {
-		log.Fatalln("need a upstream as fall back")
 	}
 	return l
+}
+
+func createResolver(resolverConfig config.ResolverConfig) (DnsResolver, error) {
+	switch resolverConfig.Type() {
+	case config.FILTER:
+		return NewFilter(resolverConfig.(*config.FilterConfig)), nil
+	case config.FILE:
+		return NewFile(resolverConfig.(*config.FileConfig)), nil
+	case config.FORWORD:
+		return NewForward(resolverConfig.(*config.ForwardConfig)), nil
+	default:
+		return nil, errors.New(fmt.Sprintf("unknown resolver type %s", resolverConfig.Type()))
+	}
 }

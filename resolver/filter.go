@@ -1,21 +1,19 @@
 package resolver
 
 import (
+	"dns-switchy/config"
 	"fmt"
 	"github.com/miekg/dns"
 	"log"
 )
 
 type Filter struct {
+	NoCache
 	queryType map[uint16]struct{}
 }
 
 func (f Filter) Close() {
 	log.Printf("%s closed", f)
-}
-
-func NewAAAAFilter() *Filter {
-	return &Filter{queryType: map[uint16]struct{}{dns.TypeAAAA: {}}}
 }
 
 func (f Filter) String() string {
@@ -35,4 +33,12 @@ func (f *Filter) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	m := new(dns.Msg)
 	m.SetReply(msg)
 	return m, nil
+}
+
+func NewFilter(config *config.FilterConfig) *Filter {
+	m := make(map[uint16]struct{})
+	for _, s := range config.Block {
+		m[dns.StringToType[s]] = struct{}{}
+	}
+	return &Filter{queryType: m}
 }

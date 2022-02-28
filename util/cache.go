@@ -8,8 +8,7 @@ import (
 )
 
 type Cache interface {
-	Set(q *dns.Question, msg *dns.Msg)
-	SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration)
+	Set(q *dns.Question, msg *dns.Msg, ttl time.Duration)
 	Get(q *dns.Question) *dns.Msg
 	Close()
 }
@@ -19,10 +18,7 @@ type NoCache struct {
 func (n NoCache) Close() {
 }
 
-func (n NoCache) Set(q *dns.Question, msg *dns.Msg) {
-}
-
-func (n NoCache) SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
+func (n NoCache) Set(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
 }
 
 func (n NoCache) Get(q *dns.Question) *dns.Msg {
@@ -68,14 +64,7 @@ func (dnsCache *DnsCache) Get(q *dns.Question) *dns.Msg {
 	return nil
 }
 
-func (dnsCache *DnsCache) Set(q *dns.Question, msg *dns.Msg) {
-	dnsCache.writeChan <- WriteTask{
-		question: q,
-		msg:      msg,
-	}
-}
-
-func (dnsCache *DnsCache) SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
+func (dnsCache *DnsCache) Set(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
 	dnsCache.writeChan <- WriteTask{
 		question: q,
 		msg:      msg,
@@ -85,20 +74,21 @@ func (dnsCache *DnsCache) SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Dur
 
 func (dnsCache *DnsCache) writeAndClean() {
 	for {
-		//log.Println("writeAndClean")
 		select {
 		case <-dnsCache.closeChan:
 			return
 		case task := <-dnsCache.writeChan:
 			var ttl time.Duration
-			if task.ttl != 0 {
-				ttl = task.ttl
-			} else {
+			if task.ttl == 0 { //未设置ttl，使用默认ttl
 				ttl = dnsCache.ttl
+			} else {
+				ttl = task.ttl
 			}
-			dnsCache.cache[*task.question] = CacheItem{
-				validBefore: time.Now().Add(ttl),
-				item:        *task.msg,
+			if ttl != 0 {
+				dnsCache.cache[*task.question] = CacheItem{
+					validBefore: time.Now().Add(ttl),
+					item:        *task.msg,
+				}
 			}
 		case <-dnsCache.cleanTicker.C:
 			before := len(dnsCache.cache)
@@ -113,15 +103,16 @@ func (dnsCache *DnsCache) writeAndClean() {
 	}
 }
 
-func NewDnsCache(ttl time.Duration, cleanInterval time.Duration) Cache {
+func NewDnsCache(ttl time.Duration) Cache {
 	if ttl == 0 {
+		log.Println("cache is disabled")
 		return &NoCache{}
 	}
 	dnsCache := &DnsCache{
 		ttl:         ttl,
 		cache:       make(map[dns.Question]CacheItem, 0),
 		writeChan:   make(chan WriteTask, 10),
-		cleanTicker: time.NewTicker(cleanInterval),
+		cleanTicker: time.NewTicker(ttl),
 		closeChan:   make(chan struct{}, 0),
 	}
 	go dnsCache.writeAndClean()

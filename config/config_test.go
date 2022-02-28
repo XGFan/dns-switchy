@@ -45,8 +45,8 @@ resolvers:
 `
 	t.Run("default", func(t *testing.T) {
 		stringReader := strings.NewReader(content)
-		got := ParseV2(stringReader)
-		target := &SwitchyConfigV2{
+		got := Parse(stringReader)
+		target := &SwitchyConfig{
 			Port: 1053,
 			Resolvers: []ResolverConfig{
 				&FilterConfig{Block: []string{"AAAA"}},
@@ -55,8 +55,7 @@ resolvers:
 					Location:        "/tmp/dhcp.leases",
 					RefreshInterval: 10 * time.Minute,
 				},
-				&HostConfig{
-					System:          true,
+				&FileConfig{
 					RefreshInterval: 10 * time.Minute,
 					Hosts: map[string]string{
 						"a.com": "1.1.1.1",
@@ -89,7 +88,6 @@ resolvers:
 		if !reflect.DeepEqual(got, target) {
 			t.Error("not equal")
 		}
-
 	})
 
 }
