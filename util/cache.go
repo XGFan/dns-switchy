@@ -9,6 +9,7 @@ import (
 
 type Cache interface {
 	Set(q *dns.Question, msg *dns.Msg)
+	SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration)
 	Get(q *dns.Question) *dns.Msg
 	Close()
 }
@@ -19,6 +20,9 @@ func (n NoCache) Close() {
 }
 
 func (n NoCache) Set(q *dns.Question, msg *dns.Msg) {
+}
+
+func (n NoCache) SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
 }
 
 func (n NoCache) Get(q *dns.Question) *dns.Msg {
@@ -53,6 +57,7 @@ type CacheItem struct {
 type WriteTask struct {
 	question *dns.Question
 	msg      *dns.Msg
+	ttl      time.Duration
 }
 
 func (dnsCache *DnsCache) Get(q *dns.Question) *dns.Msg {
@@ -70,6 +75,14 @@ func (dnsCache *DnsCache) Set(q *dns.Question, msg *dns.Msg) {
 	}
 }
 
+func (dnsCache *DnsCache) SetWithTTL(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
+	dnsCache.writeChan <- WriteTask{
+		question: q,
+		msg:      msg,
+		ttl:      ttl,
+	}
+}
+
 func (dnsCache *DnsCache) writeAndClean() {
 	for {
 		//log.Println("writeAndClean")
@@ -77,8 +90,14 @@ func (dnsCache *DnsCache) writeAndClean() {
 		case <-dnsCache.closeChan:
 			return
 		case task := <-dnsCache.writeChan:
+			var ttl time.Duration
+			if task.ttl != 0 {
+				ttl = task.ttl
+			} else {
+				ttl = dnsCache.ttl
+			}
 			dnsCache.cache[*task.question] = CacheItem{
-				validBefore: time.Now().Add(dnsCache.ttl),
+				validBefore: time.Now().Add(ttl),
 				item:        *task.msg,
 			}
 		case <-dnsCache.cleanTicker.C:
