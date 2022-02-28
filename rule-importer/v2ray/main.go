@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/v2fly/v2ray-core/v4/app/router"
 	_ "github.com/v2fly/v2ray-core/v4/infra/conf/geodata/standard"
@@ -14,6 +15,8 @@ import (
 )
 
 func main() {
+	file := flag.String("f", "v2-rule.txt", "file to write")
+	flag.Parse()
 	resp, err := http.Get("https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat")
 	failOnError(err)
 	all, err := ioutil.ReadAll(resp.Body)
@@ -45,7 +48,7 @@ func main() {
 		lines = append(lines, fmt.Sprintf("%s", domain.Value))
 	}
 	join := strings.Join(lines, "\n")
-	os.WriteFile("v2-rule.txt", []byte(join), 0644)
+	os.WriteFile(*file, []byte(join), 0644)
 }
 
 func failOnError(err error) {
