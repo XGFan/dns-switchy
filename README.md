@@ -37,13 +37,14 @@ resolvers:
     type: forward
     ttl: 600s
     url: https://cloudflare-dns.com/dns-query #doh
+    # 不设置缓存时间，采用全局ttl
     config:
       timeout: 3s #超时时间
       serverIP:
         - 104.16.249.249 #可选的，方便bootstrap
   - name: final-dns
     type: forward
-    ttl: 60s
+    ttl: -1s #由于返回可能被污染，所以不缓存（只有cf-dns无法解析，才会落到这里
     url: 114.114.114.114
 
 ```

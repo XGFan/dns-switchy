@@ -84,7 +84,7 @@ func (dnsCache *DnsCache) writeAndClean() {
 			} else {
 				ttl = task.ttl
 			}
-			if ttl != 0 {
+			if ttl > 0 {
 				dnsCache.cache[*task.question] = CacheItem{
 					validBefore: time.Now().Add(ttl),
 					item:        *task.msg,
