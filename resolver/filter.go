@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"dns-switchy/config"
+	"dns-switchy/util"
 	"fmt"
 	"github.com/miekg/dns"
 	"log"
@@ -9,7 +10,8 @@ import (
 
 type Filter struct {
 	NoCache
-	queryType map[uint16]struct{}
+	util.QueryTypeMatcher
+	util.DomainMatcher
 }
 
 func (f Filter) Close() {
@@ -17,16 +19,11 @@ func (f Filter) Close() {
 }
 
 func (f Filter) String() string {
-	strings := make([]string, 0)
-	for t := range f.queryType {
-		strings = append(strings, dns.TypeToString[t])
-	}
-	return fmt.Sprintf("TypeFilter(%s)", strings)
+	return fmt.Sprintf("TypeFilter(%s,%s)", f.DomainMatcher, f.QueryTypeMatcher)
 }
 
 func (f *Filter) Accept(msg *dns.Msg) bool {
-	_, exist := f.queryType[msg.Question[0].Qtype]
-	return exist
+	return f.MatchDomain(msg.Question[0].Name) && f.MatchQueryType(msg.Question[0].Qtype)
 }
 
 func (f *Filter) Resolve(msg *dns.Msg) (*dns.Msg, error) {
@@ -36,9 +33,8 @@ func (f *Filter) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 }
 
 func NewFilter(config *config.FilterConfig) *Filter {
-	m := make(map[uint16]struct{})
-	for _, s := range config.Block {
-		m[dns.StringToType[s]] = struct{}{}
+	return &Filter{
+		QueryTypeMatcher: util.NewQueryTypeMatcher(config.QueryType),
+		DomainMatcher:    util.NewDomainMatcher(ParseRule(config.Rule)),
 	}
-	return &Filter{queryType: m}
 }

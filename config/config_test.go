@@ -1,93 +1,84 @@
 package config
 
 import (
+	"net"
+	"os"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
 
 func Test_parse(t *testing.T) {
-	content := ` 
-port: 1053
-resolvers:
-  - type: filter
-    block:
-      - AAAA
-  - type: lease
-    domain: lan
-    location: /tmp/dhcp.leases
-    refreshInterval: 10m
-  - type: host
-    system: true
-    refreshInterval: 10m
-    hosts:
-      a.com: 1.1.1.1
-      b.com: 2.2.2.2
-  - name: cn-dns
-    type: forward
-    url: 114.114.114.114:53
-    ttl: 10s
-    rule:
-      - llscdn.com
-      - llsapp.com
-      - liulishuo.com
-      - llsserver.com
-      - wshifen.com
-      - zj186.com
-      - aaplimg.com
-      - include:v2-rule.txt
-  - name: doh
-    type: forward
-    url: https://cloudflare-dns.com/dns-query
-    config:
-      timeout: 5s
-`
+	file, e := os.Open("../config.yaml")
+	if e != nil {
+		t.Error(e)
+	}
 	t.Run("default", func(t *testing.T) {
-		stringReader := strings.NewReader(content)
-		got := Parse(stringReader)
+		got := Parse(file)
 		target := &SwitchyConfig{
 			Port: 1053,
+			TTL:  5 * time.Minute,
 			Resolvers: []ResolverConfig{
-				&FilterConfig{Block: []string{"AAAA"}},
-				&LeaseConfig{
-					Domain:          "lan",
+				&FilterConfig{QueryType: []string{"TXT"}},
+				&FilterConfig{Rule: []string{"ad.google.com"}},
+				&FilterConfig{QueryType: []string{"A"}, Rule: []string{"wechat.com"}},
+				&FileConfig{
 					Location:        "/tmp/dhcp.leases",
 					RefreshInterval: 10 * time.Minute,
+					FileType:        "lease",
+					ExtraConfig: map[string]string{
+						"domain": "lan",
+					},
 				},
 				&FileConfig{
+					Location:        "system",
 					RefreshInterval: 10 * time.Minute,
-					Hosts: map[string]string{
-						"a.com": "1.1.1.1",
-						"b.com": "2.2.2.2",
-					},
+					FileType:        "host",
+					ExtraContent:    "#语法和host一致\n1.1.1.1 a.com b.com\n2.2.2.2 c.com\n::1 d.com\n",
+					ExtraConfig:     nil,
 				},
 				&ForwardConfig{
 					Name: "cn-dns",
-					Url:  "114.114.114.114:53",
-					TTL:  10 * time.Second,
+					Url:  "114.114.114.114",
+					TTL:  600 * time.Second,
 					Rule: []string{
-						"llscdn.com",
-						"llsapp.com",
-						"liulishuo.com",
-						"llsserver.com",
-						"wshifen.com",
-						"zj186.com",
-						"aaplimg.com",
+						"cn",
+						"qq.com",
+						"baidu.com",
 						"include:v2-rule.txt",
 					},
 				},
 				&ForwardConfig{
-					Name: "doh",
+					Name: "cf-dns",
 					Url:  "https://cloudflare-dns.com/dns-query",
+					TTL:  600 * time.Second,
 					Config: DnsConfig{
-						Timeout: time.Second * 5,
+						Timeout: time.Second * 3,
+						ServerIP: []net.IP{
+							net.ParseIP("104.16.249.249"),
+						},
 					},
 				},
+				&ForwardConfig{
+					Name: "final-dns",
+					Url:  "114.114.114.114",
+					TTL:  -1 * time.Second,
+				},
 			}}
-		if !reflect.DeepEqual(got, target) {
-			t.Error("not equal")
+		if !reflect.DeepEqual(got.Port, target.Port) {
+			t.Errorf("got %+v, want %+v", got, target)
 		}
+		if !reflect.DeepEqual(got.TTL, target.TTL) {
+			t.Errorf("got %+v, want %+v", got, target)
+		}
+		for i := range got.Resolvers {
+			if !reflect.DeepEqual(got.Resolvers[i], target.Resolvers[i]) {
+				t.Errorf("got %+v, want %+v", got.Resolvers[i], target.Resolvers[i])
+			}
+		}
+		//if !reflect.DeepEqual(got, target) {
+		//	t.Error("not equal")
+		//}
 	})
 
 }

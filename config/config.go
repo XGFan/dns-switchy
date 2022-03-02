@@ -25,7 +25,7 @@ type ResolverType string
 const (
 	FILTER  ResolverType = "filter"
 	FILE    ResolverType = "file"
-	FORWORD ResolverType = "forward"
+	FORWARD ResolverType = "forward"
 )
 
 type ResolverConfig interface {
@@ -33,7 +33,8 @@ type ResolverConfig interface {
 }
 
 type FilterConfig struct {
-	Block []string `yaml:"block,omitempty"`
+	Rule      []string `yaml:"rule,omitempty"`
+	QueryType []string `yaml:"queryType,omitempty"`
 }
 
 func (f FilterConfig) Type() ResolverType {
@@ -68,7 +69,7 @@ type DnsConfig struct {
 }
 
 func (f ForwardConfig) Type() ResolverType {
-	return FORWORD
+	return FORWARD
 }
 
 func Parse(filePath io.Reader) *SwitchyConfig {
@@ -86,7 +87,7 @@ func Parse(filePath io.Reader) *SwitchyConfig {
 			filter = &FilterConfig{}
 		case FILE:
 			filter = &FileConfig{}
-		case FORWORD:
+		case FORWARD:
 			filter = &ForwardConfig{}
 		default:
 			log.Panicf("unknown resolver type: %s", resolver["type"])

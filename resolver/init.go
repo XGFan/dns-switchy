@@ -16,7 +16,7 @@ import (
 
 var BasePath string
 
-func parseRule(rules []string) []string {
+func ParseRule(rules []string) []string {
 	parsedRules := make([]string, 0)
 	for _, s := range rules {
 		if strings.Contains(s, ":") {
@@ -50,7 +50,7 @@ func parseRule(rules []string) []string {
 				}
 				all, _ := io.ReadAll(reader)
 				targetRules := strings.Split(string(all), "\n")
-				nestedParsed := parseRule(targetRules)
+				nestedParsed := ParseRule(targetRules)
 				for _, s2 := range nestedParsed {
 					parsedRules = append(parsedRules, s2)
 				}
@@ -84,7 +84,7 @@ func createResolver(resolverConfig config.ResolverConfig) (DnsResolver, error) {
 		return NewFilter(resolverConfig.(*config.FilterConfig)), nil
 	case config.FILE:
 		return NewFile(resolverConfig.(*config.FileConfig)), nil
-	case config.FORWORD:
+	case config.FORWARD:
 		return NewForward(resolverConfig.(*config.ForwardConfig)), nil
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown resolver type %s", resolverConfig.Type()))

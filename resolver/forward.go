@@ -19,7 +19,7 @@ const (
 type Forward struct {
 	Name string
 	upstream.Upstream
-	util.Matcher
+	util.DomainMatcher
 	clientIP string
 	ttl      time.Duration
 }
@@ -39,7 +39,7 @@ func (upstreamDNS *Forward) String() string {
 func (upstreamDNS *Forward) Accept(msg *dns.Msg) bool {
 	question := msg.Question[0]
 	domain := strings.TrimRight(question.Name, ".")
-	return upstreamDNS.Match(domain)
+	return upstreamDNS.MatchDomain(domain)
 }
 
 func (upstreamDNS *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
@@ -91,10 +91,10 @@ func NewForward(config *config.ForwardConfig) *Forward {
 		log.Printf("init upstream fail: %+v", err)
 	}
 	return &Forward{
-		Name:     config.Name,
-		Upstream: up,
-		Matcher:  util.NewMatcher(parseRule(config.Rule)),
-		clientIP: config.Config.ClientIP,
-		ttl:      config.TTL,
+		Name:          config.Name,
+		Upstream:      up,
+		DomainMatcher: util.NewDomainMatcher(ParseRule(config.Rule)),
+		clientIP:      config.Config.ClientIP,
+		ttl:           config.TTL,
 	}
 }

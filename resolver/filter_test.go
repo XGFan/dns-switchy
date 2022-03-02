@@ -8,7 +8,7 @@ import (
 
 func TestFilter(t *testing.T) {
 	filter := NewFilter(&config.FilterConfig{
-		Block: []string{"AAAA"},
+		QueryType: []string{"AAAA"},
 	})
 
 	tests := []struct {
