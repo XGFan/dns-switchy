@@ -6,9 +6,17 @@
 port: 1053 #监听端口，目前只支持UDP
 ttl: 5m #全局缓存时间
 resolvers:
-  - type: filter #过滤器，目前只能按类型过滤（即不返回结果，比如过滤掉AAAA
-    block:
+  - type: filter #过滤器 ，只针对类型
+    queryType:
       - TXT
+  - type: filter #过滤器 ，只针对域名，和forward规则一致
+    rule:
+      - ad.google.com
+  - type: filter #过滤器 ，域名和类型，AND的关系
+    queryType:
+      - A
+    rule:
+      - wechat.com
   - type: file #文件解析
     fileType: lease #dnsmasq租约文件
     location: /tmp/dhcp.leases
@@ -46,7 +54,6 @@ resolvers:
     type: forward
     ttl: -1s #由于返回可能被污染，所以不缓存（只有cf-dns无法解析，才会落到这里
     url: 114.114.114.114
-
 ```
 
 #### 处理流程
