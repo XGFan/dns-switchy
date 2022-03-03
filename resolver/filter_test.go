@@ -7,7 +7,7 @@ import (
 )
 
 func TestFilter(t *testing.T) {
-	filter := NewFilter(&config.FilterConfig{
+	filter, _ := NewFilter(&config.FilterConfig{
 		QueryType: []string{"AAAA"},
 	})
 

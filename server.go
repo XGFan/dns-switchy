@@ -15,8 +15,35 @@ import (
 	"time"
 )
 
-func readConfig(file *string) *config.SwitchyConfig {
+func ReadConfig(file *string) (*config.SwitchyConfig, error) {
 	log.Printf("Config: %s", *file)
+	open, err := os.Open(*file)
+	if err != nil {
+		return nil, err
+	}
+	config.BasePath = filepath.Dir(open.Name())
+	return config.ParseConfig(open)
+}
+
+type DnsServer struct {
+	config *config.SwitchyConfig
+	*dns.Server
+	resolvers []resolver.DnsResolver
+	dnsCache  util.Cache
+	shutdown  bool
+}
+
+func (s *DnsServer) Shutdown() {
+	log.Println("Shutdown server")
+	_ = s.Server.Shutdown()
+	for _, dnsResolver := range s.resolvers {
+		dnsResolver.Close()
+	}
+	s.dnsCache.Close()
+	s.shutdown = true
+}
+
+func (s *DnsServer) Run() {
 	executable, e := os.Executable()
 	if e == nil {
 		log.Printf("Executable Path: %s", executable)
@@ -25,50 +52,32 @@ func readConfig(file *string) *config.SwitchyConfig {
 	if e == nil {
 		log.Printf("Working Path: %s", wd)
 	}
-	open, err := os.Open(*file)
-	passOrFatal(err)
-	resolver.BasePath = filepath.Dir(open.Name())
-	return config.Parse(open)
-}
-
-type DnsServer struct {
-	*dns.Server
-	resolvers []resolver.DnsResolver
-	dnsCache  util.Cache
-}
-
-func (s *DnsServer) Reload(file *string) {
-	s.Shutdown()
-	s.Init(file)
-}
-
-func (s *DnsServer) Shutdown() {
-	_ = s.Server.Shutdown()
-	for _, dnsResolver := range s.resolvers {
-		dnsResolver.Close()
-	}
-	s.dnsCache.Close()
-}
-
-func calcTTL(resolvers []resolver.DnsResolver) time.Duration {
-	minTTL := time.Duration(0)
-	for _, res := range resolvers {
-		if res.TTL() > 0 && (minTTL > res.TTL() || minTTL == 0) {
-			minTTL = res.TTL()
+	log.Printf("Started at %d, TTL: %s with %s", s.config.Port, s.config.TTL, s.resolvers)
+	for i := 1; i <= 3; i++ {
+		err := s.Server.ListenAndServe()
+		if s.shutdown {
+			return
+		} else {
+			if err != nil {
+				log.Println(err)
+				time.Sleep(time.Duration(i) * time.Second)
+			} else {
+				return
+			}
 		}
 	}
-	return minTTL
 }
 
-func (s *DnsServer) Init(file *string) {
-	conf := readConfig(file)
+func Create(conf *config.SwitchyConfig) (*DnsServer, error) {
 	server := dns.Server{Net: "udp", Addr: fmt.Sprintf(":%d", conf.Port)}
-	resolvers := resolver.Init(conf)
+	resolvers, err := resolver.CreateResolvers(conf)
+	if err != nil {
+		return nil, err
+	}
 	if conf.TTL == 0 {
 		conf.TTL = calcTTL(resolvers)
 	}
 	dnsCache := util.NewDnsCache(conf.TTL)
-	log.Printf("Started at %d, TTL: %s with %s", conf.Port, conf.TTL, resolvers)
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, msg *dns.Msg) {
 		if checkAndUnify(msg) != nil {
 			log.Printf("[%s] send invalid msg [%s]", writer.RemoteAddr(), msg.String())
@@ -100,18 +109,21 @@ func (s *DnsServer) Init(file *string) {
 			}
 		}()
 	})
-	s.Server = &server
-	s.resolvers = resolvers
-	s.dnsCache = dnsCache
+	return &DnsServer{
+		config:    conf,
+		Server:    &server,
+		resolvers: resolvers,
+		dnsCache:  dnsCache}, nil
 }
 
-func (s *DnsServer) Run() {
-	for {
-		err := s.Server.ListenAndServe()
-		if err != nil {
-			log.Println(err)
+func calcTTL(resolvers []resolver.DnsResolver) time.Duration {
+	minTTL := time.Duration(0)
+	for _, res := range resolvers {
+		if res.TTL() > 0 && (minTTL > res.TTL() || minTTL == 0) {
+			minTTL = res.TTL()
 		}
 	}
+	return minTTL
 }
 
 type wrapWriter struct {
@@ -172,10 +184,4 @@ type StructureLog struct {
 	Time     int64  `json:"time,omitempty"`
 	Question string `json:"question,omitempty"`
 	Error    error  `json:"error,omitempty"`
-}
-
-func passOrFatal(e error) {
-	if e != nil {
-		log.Fatalln(e)
-	}
 }

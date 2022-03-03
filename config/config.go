@@ -1,12 +1,21 @@
 package config
 
 import (
+	"bytes"
+	"fmt"
 	"gopkg.in/yaml.v2"
 	"io"
+	"io/fs"
 	"log"
 	"net"
+	"net/http"
+	"os"
+	"path"
+	"strings"
 	"time"
 )
+
+var BasePath string
 
 type SwitchyConfig struct {
 	Port      int
@@ -72,11 +81,11 @@ func (f ForwardConfig) Type() ResolverType {
 	return FORWARD
 }
 
-func Parse(filePath io.Reader) *SwitchyConfig {
+func ParseConfig(filePath io.Reader) (*SwitchyConfig, error) {
 	_config := _SwitchyConfig{}
 	err := yaml.NewDecoder(filePath).Decode(&_config)
 	if err != nil {
-		log.Panicf("Error parsing config file: %s", err)
+		return nil, fmt.Errorf("error parsing config file: %s", err)
 	}
 	resolverConfigs := make([]ResolverConfig, 0, len(_config.Resolvers))
 	for _, resolver := range _config.Resolvers {
@@ -90,11 +99,11 @@ func Parse(filePath io.Reader) *SwitchyConfig {
 		case FORWARD:
 			filter = &ForwardConfig{}
 		default:
-			log.Panicf("unknown resolver type: %s", resolver["type"])
+			return nil, fmt.Errorf("unknown resolver type: %s", resolver["type"])
 		}
 		err := yaml.Unmarshal(marshal, filter)
 		if err != nil {
-			log.Panicf("marshal resolver type: %s fail, %s", resolver["type"], err)
+			return nil, fmt.Errorf("marshal resolver type: %s fail, %s", resolver["type"], err)
 		}
 		resolverConfigs = append(resolverConfigs, filter)
 	}
@@ -102,5 +111,53 @@ func Parse(filePath io.Reader) *SwitchyConfig {
 		Port:      _config.Port,
 		TTL:       _config.TTL,
 		Resolvers: resolverConfigs,
+	}, nil
+}
+
+func ParseRule(rules []string) []string {
+	parsedRules := make([]string, 0)
+	for _, s := range rules {
+		if strings.Contains(s, ":") {
+			index := strings.Index(s, ":")
+			var reader io.ReadCloser
+			cmdType := strings.Trim(strings.ToLower(s[0:index]), " ")
+			if cmdType == "include" {
+				target := s[index+1:]
+				if strings.HasPrefix(target, "http") {
+					resp, err := http.Get(target)
+					if err != nil {
+						log.Printf("Read %s fail: %s", target, err)
+						reader = io.NopCloser(bytes.NewReader(nil))
+					} else {
+						reader = resp.Body
+					}
+				} else {
+					var open fs.File
+					var err error
+					if BasePath != "" && !path.IsAbs(target) {
+						open, err = os.DirFS(BasePath).Open(target)
+					} else {
+						open, err = os.Open(target)
+					}
+					if err != nil {
+						log.Printf("Read %s fail: %s", target, err)
+						reader = io.NopCloser(bytes.NewReader(nil))
+					} else {
+						reader = open
+					}
+				}
+				all, _ := io.ReadAll(reader)
+				targetRules := strings.Split(string(all), "\n")
+				nestedParsed := ParseRule(targetRules)
+				for _, s2 := range nestedParsed {
+					parsedRules = append(parsedRules, s2)
+				}
+			} else {
+				log.Printf("unsupported type %s", cmdType)
+			}
+		} else {
+			parsedRules = append(parsedRules, s)
+		}
 	}
+	return parsedRules
 }

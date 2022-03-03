@@ -13,10 +13,33 @@ func main() {
 	if !*ts {
 		log.SetFlags(0)
 	}
-	var server DnsServer
-	server.Init(file)
-	defer watchConfigFile(file, server.Reload)()
-	server.Run()
+	config, err := ReadConfig(file)
+	passOrFatal(err)
+	server, err := Create(config)
+	passOrFatal(err)
+	serverChan := make(chan *DnsServer, 1)
+	serverChan <- server
+	defer watchConfigFile(file, func(s *string) {
+		newConfig, err := ReadConfig(file)
+		if err != nil {
+			log.Printf("Parse new config fail: %s", err)
+			return
+		}
+		newServer, err := Create(newConfig)
+		if err != nil {
+			log.Printf("Create new server fail: %s", err)
+			return
+		}
+		serverChan <- newServer
+	})()
+	var prevServer *DnsServer
+	for newServer := range serverChan {
+		if prevServer != nil {
+			prevServer.Shutdown()
+		}
+		prevServer = newServer
+		go prevServer.Run()
+	}
 }
 
 func watchConfigFile(file *string, action func(*string)) func() {
@@ -30,7 +53,6 @@ func watchConfigFile(file *string, action func(*string)) func() {
 	if err != nil {
 		log.Printf("Can not watch file %s, Error: %s", *file, err)
 		return func() {
-
 		}
 	}
 	log.Printf("Watching %s", *file)
@@ -46,6 +68,12 @@ func watchConfigFile(file *string, action func(*string)) func() {
 		}
 	}()
 	return func() {
-		watcher.Close()
+		_ = watcher.Close()
+	}
+}
+
+func passOrFatal(e error) {
+	if e != nil {
+		log.Fatalln(e)
 	}
 }

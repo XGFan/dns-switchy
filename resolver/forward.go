@@ -3,6 +3,7 @@ package resolver
 import (
 	"dns-switchy/config"
 	"dns-switchy/util"
+	"fmt"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
 	"log"
@@ -81,20 +82,20 @@ func setECS(m *dns.Msg, ip net.IP) {
 	m.Extra = append(m.Extra, o)
 }
 
-func NewForward(config *config.ForwardConfig) *Forward {
+func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	up, err := upstream.AddressToUpstream(config.Url, &upstream.Options{
 		Bootstrap:     config.Config.Bootstrap,
 		Timeout:       config.Config.Timeout,
 		ServerIPAddrs: config.Config.ServerIP,
 	})
 	if err != nil {
-		log.Printf("init upstream fail: %+v", err)
+		return nil, fmt.Errorf("init upstream with %v fail: %v ", config, err)
 	}
 	return &Forward{
 		Name:          config.Name,
 		Upstream:      up,
-		DomainMatcher: util.NewDomainMatcher(ParseRule(config.Rule)),
+		DomainMatcher: util.NewDomainMatcher(config.Rule),
 		clientIP:      config.Config.ClientIP,
 		ttl:           config.TTL,
-	}
+	}, nil
 }

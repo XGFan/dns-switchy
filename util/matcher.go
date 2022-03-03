@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"dns-switchy/config"
 	"fmt"
 	"github.com/miekg/dns"
 	"strings"
@@ -112,7 +113,8 @@ func NewDomainSet(domains []string) DomainSet {
 	return set
 }
 
-func NewDomainMatcher(domains []string) DomainMatcher {
+func NewDomainMatcher(rules []string) DomainMatcher {
+	domains := config.ParseRule(rules)
 	if len(domains) > 0 {
 		return NewDomainSet(domains)
 	} else {

@@ -32,9 +32,9 @@ func (f *Filter) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	return m, nil
 }
 
-func NewFilter(config *config.FilterConfig) *Filter {
+func NewFilter(config *config.FilterConfig) (*Filter, error) {
 	return &Filter{
 		QueryTypeMatcher: util.NewQueryTypeMatcher(config.QueryType),
-		DomainMatcher:    util.NewDomainMatcher(ParseRule(config.Rule)),
-	}
+		DomainMatcher:    util.NewDomainMatcher(config.Rule),
+	}, nil
 }

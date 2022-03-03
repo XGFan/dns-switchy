@@ -14,7 +14,10 @@ func Test_parse(t *testing.T) {
 		t.Error(e)
 	}
 	t.Run("default", func(t *testing.T) {
-		got := Parse(file)
+		got, err := ParseConfig(file)
+		if err != nil {
+			t.Error(err)
+		}
 		target := &SwitchyConfig{
 			Port: 1053,
 			TTL:  5 * time.Minute,

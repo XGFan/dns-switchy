@@ -159,7 +159,7 @@ func (h Hosts) Parse(content string) QueryMap {
 	return inMemory
 }
 
-func NewFile(config *config.FileConfig) *FileResolver {
+func NewFile(config *config.FileConfig) (*FileResolver, error) {
 	var fileParser FileParser
 	var location = config.Location
 	switch config.FileType {
@@ -173,7 +173,10 @@ func NewFile(config *config.FileConfig) *FileResolver {
 			domain: config.ExtraConfig["domain"],
 		}
 	default:
-		log.Fatalf("Unknown file type: %s", config.FileType)
+		return nil, fmt.Errorf("unknown file type: %s", config.FileType)
+	}
+	if config.RefreshInterval <= 0 {
+		return nil, fmt.Errorf("refreshInterval must greater than zero: %v", config)
 	}
 	resolver := &FileResolver{
 		location:      location,
@@ -184,7 +187,7 @@ func NewFile(config *config.FileConfig) *FileResolver {
 	}
 	resolver.update()
 	go resolver.start()
-	return resolver
+	return resolver, nil
 }
 
 func getSystemLocation() string {
