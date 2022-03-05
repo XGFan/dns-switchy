@@ -83,5 +83,28 @@ func Test_parse(t *testing.T) {
 		//	t.Error("not equal")
 		//}
 	})
+}
 
+func TestParseHttpAddr(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    string
+		want    interface{}
+		wantErr bool
+	}{
+		{name: "ip without port", args: "127.0.0.1", want: "", wantErr: true},
+		{name: "ip:port", args: "127.0.0.1:8888", want: "", wantErr: false},
+		{name: "only port 1", args: ":8888", want: "", wantErr: false},
+		{name: "only port 2", args: "8888", want: "", wantErr: false},
+		{name: "file", args: "unix:/tmp/hello.socks", want: "", wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseHttpAddr(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseHttpAddr() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
 }

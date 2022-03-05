@@ -32,13 +32,13 @@ func main() {
 		}
 		serverChan <- newServer
 	})()
-	var prevServer *DnsServer
+	var runningServer *DnsServer
 	for newServer := range serverChan {
-		if prevServer != nil {
-			prevServer.Shutdown()
+		if runningServer != nil {
+			runningServer.Shutdown()
 		}
-		prevServer = newServer
-		go prevServer.Run()
+		runningServer = newServer
+		runningServer.Start()
 	}
 }
 

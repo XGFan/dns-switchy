@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,13 +20,38 @@ var BasePath string
 
 type SwitchyConfig struct {
 	Port      int
-	Resolvers []ResolverConfig
 	TTL       time.Duration
+	Http      *HttpConfig
+	Resolvers []ResolverConfig
+}
+type HttpConfig struct {
+	Network string
+	Addr    string
+}
+
+func (h *HttpConfig) String() string {
+	if h == nil {
+		return ""
+	}
+	if h.Network == "tcp" {
+		return h.Addr
+	}
+	return fmt.Sprintf("%s:%s", h.Network, h.Addr)
+}
+
+func (h *HttpConfig) CreateListener() (net.Listener, error) {
+	if h.Network == "unix" {
+		if err := os.RemoveAll(h.Addr); err != nil {
+			return nil, err
+		}
+	}
+	return net.Listen(h.Network, h.Addr)
 }
 
 type _SwitchyConfig struct {
 	Port      int                      `yaml:"port,omitempty"`
 	TTL       time.Duration            `yaml:"ttl,omitempty"`
+	Http      string                   `yaml:"http,omitempty"`
 	Resolvers []map[string]interface{} `yaml:"resolvers,omitempty"`
 }
 
@@ -107,9 +133,14 @@ func ParseConfig(filePath io.Reader) (*SwitchyConfig, error) {
 		}
 		resolverConfigs = append(resolverConfigs, filter)
 	}
+	httpConfig, err := ParseHttpAddr(_config.Http)
+	if err != nil {
+		return nil, err
+	}
 	return &SwitchyConfig{
 		Port:      _config.Port,
 		TTL:       _config.TTL,
+		Http:      httpConfig,
 		Resolvers: resolverConfigs,
 	}, nil
 }
@@ -160,4 +191,22 @@ func ParseRule(rules []string) []string {
 		}
 	}
 	return parsedRules
+}
+
+func ParseHttpAddr(str string) (*HttpConfig, error) {
+	if str == "" {
+		return nil, nil
+	}
+	tcpAddr, err := net.ResolveTCPAddr("", str)
+	if err == nil {
+		return &HttpConfig{"tcp", tcpAddr.String()}, nil
+	}
+	port, err := strconv.Atoi(str)
+	if err == nil {
+		return &HttpConfig{"tcp", fmt.Sprintf(":%d", port)}, nil
+	}
+	if strings.HasPrefix(str, "unix:") {
+		return &HttpConfig{"unix", str[5:]}, nil
+	}
+	return nil, fmt.Errorf("invalid http address: %s", str)
 }
