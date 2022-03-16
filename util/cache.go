@@ -18,10 +18,10 @@ type NoCache struct {
 func (n NoCache) Close() {
 }
 
-func (n NoCache) Set(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
+func (n NoCache) Set(_ *dns.Question, _ *dns.Msg, _ time.Duration) {
 }
 
-func (n NoCache) Get(q *dns.Question) *dns.Msg {
+func (n NoCache) Get(_ *dns.Question) *dns.Msg {
 	return nil
 }
 
