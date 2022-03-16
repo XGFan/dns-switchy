@@ -48,7 +48,8 @@ func main() {
 		lines = append(lines, fmt.Sprintf("%s", domain.Value))
 	}
 	join := strings.Join(lines, "\n")
-	os.WriteFile(*file, []byte(join), 0644)
+	err = os.WriteFile(*file, []byte(join), 0644)
+	failOnError(err)
 }
 
 func failOnError(err error) {
