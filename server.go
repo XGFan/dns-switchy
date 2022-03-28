@@ -22,6 +22,7 @@ import (
 func ReadConfig(file *string) (*config.SwitchyConfig, error) {
 	log.Printf("Config: %s", *file)
 	open, err := os.Open(*file)
+	defer open.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -40,23 +41,23 @@ func printRuntimeInfo() {
 	}
 }
 
-type DnsServer struct {
-	config    *config.SwitchyConfig
-	nsServer  *dns.Server
-	apiServer *http.Server
-	resolvers []resolver.DnsResolver
-	dnsCache  util.Cache
-	shutdown  bool
-	wg        sync.WaitGroup
+type DnsSwitchyServer struct {
+	config     *config.SwitchyConfig
+	udpServer  *dns.Server
+	httpServer *http.Server
+	resolvers  []resolver.DnsResolver
+	dnsCache   util.Cache
+	shutdown   bool
+	wg         sync.WaitGroup
 }
 
-func (s *DnsServer) Shutdown() {
+func (s *DnsSwitchyServer) Shutdown() {
 	log.Println("Shutdown server")
-	if s.nsServer != nil {
-		_ = s.nsServer.Shutdown()
+	if s.udpServer != nil {
+		_ = s.udpServer.Shutdown()
 	}
-	if s.apiServer != nil {
-		_ = s.apiServer.Shutdown(context.Background())
+	if s.httpServer != nil {
+		_ = s.httpServer.Shutdown(context.Background())
 	}
 	for _, dnsResolver := range s.resolvers {
 		dnsResolver.Close()
@@ -65,28 +66,30 @@ func (s *DnsServer) Shutdown() {
 	s.wg.Wait()
 }
 
-func (s *DnsServer) Start() {
+func (s *DnsSwitchyServer) Start() {
 	printRuntimeInfo()
 	log.Printf("Started at %d\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Port, s.config.Http, s.config.TTL, s.resolvers)
-	go s.StartNs()
-	go s.StartHttp()
+	go s.StartPlainUDPServer()
+	go s.StartHttpServer()
 	s.wg.Wait()
 }
-func (s *DnsServer) StartNs() {
+
+func (s *DnsSwitchyServer) StartPlainUDPServer() {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	s.nsServer = &dns.Server{
+	s.udpServer = &dns.Server{
 		Net:     "udp",
 		Addr:    fmt.Sprintf(":%d", s.config.Port),
-		Handler: s.nsHandler(),
+		Handler: s.plainUDPHandler(),
 	}
-	retry(s.nsServer.ListenAndServe)
+	retry(s.udpServer.ListenAndServe)
 }
-func (s *DnsServer) StartHttp() {
+
+func (s *DnsSwitchyServer) StartHttpServer() {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	s.apiServer = &http.Server{
-		Handler: s.apiHandler(),
+	s.httpServer = &http.Server{
+		Handler: s.httpHandler(),
 	}
 	if s.config.Http == nil {
 		return
@@ -96,7 +99,7 @@ func (s *DnsServer) StartHttp() {
 		if err != nil {
 			return err
 		}
-		err = s.apiServer.Serve(listener)
+		err = s.httpServer.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -104,19 +107,31 @@ func (s *DnsServer) StartHttp() {
 	})
 }
 
-func retry(listenFunc func() error) {
-	for i := 1; i <= 3; i++ {
-		err := listenFunc()
-		if err != nil {
-			log.Printf("Retry fail: %v", err)
-			time.Sleep(time.Duration(i) * time.Second)
-		} else {
-			break
-		}
+func (s *DnsSwitchyServer) plainUDPHandler() dns.HandlerFunc {
+	return func(writer dns.ResponseWriter, msg *dns.Msg) {
+		s.dnsMsgHandler(&DnsWriter{writer, msg, time.Now().UnixMilli()}, msg)
 	}
 }
 
-func (s *DnsServer) dnsHandler(resultWriter ResultWriter, msg *dns.Msg) {
+func (s *DnsSwitchyServer) httpHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queryType := r.URL.Query().Get("type")
+		if queryType == "" {
+			queryType = "A"
+		}
+		question := r.URL.Query().Get("question")
+		if question == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("Missing question"))
+			return
+		}
+		m := new(dns.Msg)
+		m.Question = append(m.Question, dns.Question{Name: question, Qtype: dns.StringToType[queryType], Qclass: dns.ClassINET})
+		s.dnsMsgHandler(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
+	})
+}
+
+func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg) {
 	if checkAndUnify(msg) != nil {
 		log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
 	}
@@ -145,31 +160,7 @@ func (s *DnsServer) dnsHandler(resultWriter ResultWriter, msg *dns.Msg) {
 	}
 }
 
-func (s *DnsServer) nsHandler() dns.HandlerFunc {
-	return func(writer dns.ResponseWriter, msg *dns.Msg) {
-		s.dnsHandler(&NsWriter{writer, msg, time.Now().UnixMilli()}, msg)
-	}
-}
-
-func (s *DnsServer) apiHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queryType := r.URL.Query().Get("type")
-		if queryType == "" {
-			queryType = "A"
-		}
-		question := r.URL.Query().Get("question")
-		if question == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte("Missing question"))
-			return
-		}
-		m := new(dns.Msg)
-		m.Question = append(m.Question, dns.Question{Name: question, Qtype: dns.StringToType[queryType], Qclass: dns.ClassINET})
-		s.dnsHandler(&ApiWriter{w, m, time.Now().UnixMilli()}, m)
-	})
-}
-
-func Create(conf *config.SwitchyConfig) (*DnsServer, error) {
+func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 	resolvers, err := resolver.CreateResolvers(conf)
 	if err != nil {
 		return nil, err
@@ -177,12 +168,24 @@ func Create(conf *config.SwitchyConfig) (*DnsServer, error) {
 	if conf.TTL == 0 {
 		conf.TTL = calcTTL(resolvers)
 	}
-	return &DnsServer{
+	return &DnsSwitchyServer{
 		config:    conf,
 		resolvers: resolvers,
 		dnsCache:  util.NewDnsCache(conf.TTL),
 		wg:        sync.WaitGroup{},
 	}, nil
+}
+
+func retry(listenFunc func() error) {
+	for i := 1; i <= 3; i++ {
+		err := listenFunc()
+		if err != nil {
+			log.Printf("Retry fail: %v", err)
+			time.Sleep(time.Duration(i) * time.Second)
+		} else {
+			break
+		}
+	}
 }
 
 func calcTTL(resolvers []resolver.DnsResolver) time.Duration {
@@ -201,13 +204,13 @@ type ResultWriter interface {
 	Fail(name interface{}, err error)
 }
 
-type NsWriter struct {
+type DnsWriter struct {
 	writer dns.ResponseWriter
 	msg    *dns.Msg
 	start  int64
 }
 
-type ApiWriter struct {
+type HttpWriter struct {
 	writer http.ResponseWriter
 	msg    *dns.Msg
 	start  int64
@@ -224,11 +227,11 @@ func (f FakeAddr) String() string {
 	return "api"
 }
 
-func (a *ApiWriter) RemoteAddr() net.Addr {
+func (a *HttpWriter) RemoteAddr() net.Addr {
 	return &FakeAddr{}
 }
 
-func (a *ApiWriter) Success(name interface{}, resp *dns.Msg) {
+func (a *HttpWriter) Success(name interface{}, resp *dns.Msg) {
 	a.writer.Header().Set("content-type", "application/json")
 	_ = json.NewEncoder(a.writer).Encode(map[string]interface{}{
 		"resolver": name,
@@ -236,7 +239,7 @@ func (a *ApiWriter) Success(name interface{}, resp *dns.Msg) {
 	})
 }
 
-func (a *ApiWriter) Fail(name interface{}, err error) {
+func (a *HttpWriter) Fail(name interface{}, err error) {
 	a.writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(a.writer).Encode(map[string]interface{}{
 		"resolver": name,
@@ -244,11 +247,11 @@ func (a *ApiWriter) Fail(name interface{}, err error) {
 	})
 }
 
-func (w *NsWriter) RemoteAddr() net.Addr {
+func (w *DnsWriter) RemoteAddr() net.Addr {
 	return w.writer.RemoteAddr()
 }
 
-func (w *NsWriter) Success(name interface{}, resp *dns.Msg) {
+func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 	remoteAddr := w.writer.RemoteAddr().String()
 	structureLog := StructureLog{
 		Resolver: fmt.Sprintf("%s", name),
@@ -266,7 +269,7 @@ func (w *NsWriter) Success(name interface{}, resp *dns.Msg) {
 	_ = w.writer.WriteMsg(resp)
 }
 
-func (w *NsWriter) Fail(name interface{}, err error) {
+func (w *DnsWriter) Fail(name interface{}, err error) {
 	remoteAddr := w.writer.RemoteAddr().String()
 	structureLog := StructureLog{
 		Resolver: fmt.Sprintf("%s", name),

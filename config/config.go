@@ -107,9 +107,9 @@ func (f ForwardConfig) Type() ResolverType {
 	return FORWARD
 }
 
-func ParseConfig(filePath io.Reader) (*SwitchyConfig, error) {
+func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	_config := _SwitchyConfig{}
-	err := yaml.NewDecoder(filePath).Decode(&_config)
+	err := yaml.NewDecoder(contentReader).Decode(&_config)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing config file: %s", err)
 	}

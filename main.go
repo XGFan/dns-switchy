@@ -17,7 +17,7 @@ func main() {
 	passOrFatal(err)
 	server, err := Create(config)
 	passOrFatal(err)
-	serverChan := make(chan *DnsServer, 1)
+	serverChan := make(chan *DnsSwitchyServer, 1)
 	serverChan <- server
 	defer watchConfigFile(file, func(s *string) {
 		newConfig, err := ReadConfig(file)
@@ -32,7 +32,7 @@ func main() {
 		}
 		serverChan <- newServer
 	})()
-	var runningServer *DnsServer
+	var runningServer *DnsSwitchyServer
 	for newServer := range serverChan {
 		if runningServer != nil {
 			runningServer.Shutdown()
