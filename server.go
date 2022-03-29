@@ -234,7 +234,7 @@ func (a *HttpWriter) RemoteAddr() net.Addr {
 func (a *HttpWriter) Success(name interface{}, resp *dns.Msg) {
 	a.writer.Header().Set("content-type", "application/json")
 	_ = json.NewEncoder(a.writer).Encode(map[string]interface{}{
-		"resolver": name,
+		"resolver": fmt.Sprintf("%s", name),
 		"answer":   resp,
 	})
 }
@@ -242,7 +242,7 @@ func (a *HttpWriter) Success(name interface{}, resp *dns.Msg) {
 func (a *HttpWriter) Fail(name interface{}, err error) {
 	a.writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(a.writer).Encode(map[string]interface{}{
-		"resolver": name,
+		"resolver": fmt.Sprintf("%s", name),
 		"error":    err,
 	})
 }
