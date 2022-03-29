@@ -126,7 +126,7 @@ func (s *DnsSwitchyServer) httpHandler() http.Handler {
 			return
 		}
 		m := new(dns.Msg)
-		m.Question = append(m.Question, dns.Question{Name: question, Qtype: dns.StringToType[queryType], Qclass: dns.ClassINET})
+		m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: dns.StringToType[queryType], Qclass: dns.ClassINET})
 		s.dnsMsgHandler(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
 	})
 }
