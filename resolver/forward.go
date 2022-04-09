@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"dns-switchy/config"
 	"dns-switchy/util"
 	"errors"
@@ -86,7 +87,9 @@ func setECS(m *dns.Msg, ip net.IP) {
 type MultiUpstream []upstream.Upstream
 
 func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
-	result := make(chan interface{}, len(mu))
+	result := make(chan interface{})
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
 	for _, u := range mu {
 		go func(up upstream.Upstream, q *dns.Msg) {
 			exchange, err := up.Exchange(q.Copy())
@@ -96,8 +99,12 @@ func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
 			} else {
 				r = exchange
 			}
-			log.Println(r)
-			result <- r
+			select {
+			case <-ctx.Done():
+				return
+			case result <- r:
+				return
+			}
 		}(u, m)
 	}
 	for range mu {
