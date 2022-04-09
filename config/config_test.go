@@ -42,7 +42,6 @@ func Test_parse(t *testing.T) {
 				},
 				&ForwardConfig{
 					Name: "cn-dns",
-					Url:  "114.114.114.114",
 					TTL:  600 * time.Second,
 					Rule: []string{
 						"cn",
@@ -50,22 +49,29 @@ func Test_parse(t *testing.T) {
 						"baidu.com",
 						"include:v2-rule.txt",
 					},
+					UpstreamConfig: UpstreamConfig{
+						Url: "114.114.114.114",
+					},
 				},
 				&ForwardConfig{
 					Name: "cf-dns",
-					Url:  "https://cloudflare-dns.com/dns-query",
-					TTL:  600 * time.Second,
-					Config: DnsConfig{
-						Timeout: time.Second * 3,
-						ServerIP: []net.IP{
-							net.ParseIP("104.16.249.249"),
+					TTL:  0,
+					UpstreamConfig: UpstreamConfig{
+						Url: "https://cloudflare-dns.com/dns-query",
+						Config: DnsConfig{
+							Timeout: time.Second * 3,
+							ServerIP: []net.IP{
+								net.ParseIP("104.16.249.249"),
+							},
 						},
 					},
 				},
 				&ForwardConfig{
 					Name: "final-dns",
-					Url:  "114.114.114.114",
 					TTL:  -1 * time.Second,
+					UpstreamConfig: UpstreamConfig{
+						Url: "114.114.114.114",
+					},
 				},
 			}}
 		if !reflect.DeepEqual(got.Port, target.Port) {

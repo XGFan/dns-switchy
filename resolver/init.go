@@ -27,6 +27,8 @@ func createResolver(resolverConfig config.ResolverConfig) (DnsResolver, error) {
 		return NewFile(resolverConfig.(*config.FileConfig))
 	case config.FORWARD:
 		return NewForward(resolverConfig.(*config.ForwardConfig))
+	case config.FORWARD_GROUP:
+		return NewForwardGroup(resolverConfig.(*config.ForwardGroupConfig))
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown resolver type %s", resolverConfig.Type()))
 	}

@@ -34,7 +34,7 @@ resolvers:
       ::1 d.com
   - name: cn-dns
     type: forward
-    ttl: 600s #缓存时间
+    ttl: 600s #缓存时间10分钟
     url: 114.114.114.114 #udp可以省略端口
     rule: #规则都是按域来的，a.com就覆盖了1.a.com，当规则存在时，只用该resolver处理符合规则的请求
       - cn
@@ -43,9 +43,9 @@ resolvers:
       - include:v2-rule.txt #支持读取额外的文件
   - name: cf-dns
     type: forward
-    ttl: 600s
+    # 不设置缓存时间，采用全局ttl，实际就是5分钟
+    # ttl: 600s
     url: https://cloudflare-dns.com/dns-query #doh
-    # 不设置缓存时间，采用全局ttl
     config:
       timeout: 3s #超时时间
       serverIP:
@@ -54,6 +54,7 @@ resolvers:
     type: forward
     ttl: -1s #由于返回可能被污染，所以不缓存（只有cf-dns无法解析，才会落到这里
     url: 114.114.114.114
+
 ```
 
 #### 处理流程

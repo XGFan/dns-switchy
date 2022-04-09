@@ -58,9 +58,10 @@ type _SwitchyConfig struct {
 type ResolverType string
 
 const (
-	FILTER  ResolverType = "filter"
-	FILE    ResolverType = "file"
-	FORWARD ResolverType = "forward"
+	FILTER        ResolverType = "filter"
+	FILE          ResolverType = "file"
+	FORWARD       ResolverType = "forward"
+	FORWARD_GROUP ResolverType = "forward-group"
 )
 
 type ResolverConfig interface {
@@ -89,11 +90,10 @@ func (h FileConfig) Type() ResolverType {
 }
 
 type ForwardConfig struct {
-	Name   string        `yaml:"name,omitempty"`
-	TTL    time.Duration `yaml:"ttl,omitempty"`
-	Url    string        `yaml:"url,omitempty"`
-	Rule   []string      `yaml:"rule,omitempty"`
-	Config DnsConfig     `yaml:"config,omitempty"`
+	Name           string        `yaml:"name,omitempty"`
+	TTL            time.Duration `yaml:"ttl,omitempty"`
+	Rule           []string      `yaml:"rule,omitempty"`
+	UpstreamConfig `yaml:",inline"`
 }
 
 type DnsConfig struct {
@@ -105,6 +105,22 @@ type DnsConfig struct {
 
 func (f ForwardConfig) Type() ResolverType {
 	return FORWARD
+}
+
+type UpstreamConfig struct {
+	Url    string    `yaml:"url,omitempty"`
+	Config DnsConfig `yaml:"config,omitempty"`
+}
+
+type ForwardGroupConfig struct {
+	Name      string           `yaml:"name,omitempty"`
+	TTL       time.Duration    `yaml:"ttl,omitempty"`
+	Rule      []string         `yaml:"rule,omitempty"`
+	Upstreams []UpstreamConfig `yaml:"upstreams,omitempty"`
+}
+
+func (f ForwardGroupConfig) Type() ResolverType {
+	return FORWARD_GROUP
 }
 
 func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
@@ -124,6 +140,8 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 			filter = &FileConfig{}
 		case FORWARD:
 			filter = &ForwardConfig{}
+		case FORWARD_GROUP:
+			filter = &ForwardGroupConfig{}
 		default:
 			return nil, fmt.Errorf("unknown resolver type: %s", resolver["type"])
 		}

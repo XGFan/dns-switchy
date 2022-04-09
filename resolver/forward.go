@@ -3,6 +3,7 @@ package resolver
 import (
 	"dns-switchy/config"
 	"dns-switchy/util"
+	"errors"
 	"fmt"
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
@@ -82,6 +83,71 @@ func setECS(m *dns.Msg, ip net.IP) {
 	m.Extra = append(m.Extra, o)
 }
 
+type MultiUpstream []upstream.Upstream
+
+func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
+	result := make(chan interface{}, len(mu))
+	for _, u := range mu {
+		go func(up upstream.Upstream, q *dns.Msg) {
+			exchange, err := up.Exchange(q.Copy())
+			var r interface{}
+			if err != nil {
+				r = err
+			} else {
+				r = exchange
+			}
+			log.Println(r)
+			result <- r
+		}(u, m)
+	}
+	for range mu {
+		ret := <-result
+		if r, ok := ret.(*dns.Msg); ok {
+			return r, nil
+		}
+	}
+	return nil, errors.New("all upstreams fail")
+}
+
+func (mu MultiUpstream) Address() string {
+	addresses := make([]string, 0)
+	for _, u := range mu {
+		addresses = append(addresses, u.Address())
+	}
+	return strings.Join(addresses, ",")
+}
+func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
+	var up upstream.Upstream
+	var err error
+	upstreams := make([]upstream.Upstream, 0)
+	for _, upConfig := range config.Upstreams {
+		one, e := upstream.AddressToUpstream(upConfig.Url, &upstream.Options{
+			Bootstrap:     upConfig.Config.Bootstrap,
+			Timeout:       upConfig.Config.Timeout,
+			ServerIPAddrs: upConfig.Config.ServerIP,
+		})
+		if e == nil {
+			upstreams = append(upstreams, one)
+		} else {
+			log.Printf("init upstream with %v fail: %v ", upConfig, err)
+		}
+	}
+	if len(upstreams) == 0 {
+		err = fmt.Errorf("all url fails")
+	}
+	up = MultiUpstream(upstreams)
+
+	if err != nil {
+		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)
+	}
+	return &Forward{
+		Name:          config.Name,
+		Upstream:      up,
+		DomainMatcher: util.NewDomainMatcher(config.Rule),
+		ttl:           config.TTL,
+	}, nil
+}
+
 func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	up, err := upstream.AddressToUpstream(config.Url, &upstream.Options{
 		Bootstrap:     config.Config.Bootstrap,
@@ -89,7 +155,7 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 		ServerIPAddrs: config.Config.ServerIP,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("init upstream with %v fail: %v ", config, err)
+		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)
 	}
 	return &Forward{
 		Name:          config.Name,
