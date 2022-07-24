@@ -97,7 +97,11 @@ func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
 			if err != nil {
 				r = err
 			} else {
-				r = exchange
+				if exchange.Rcode == dns.RcodeRefused {
+					r = errors.New(up.Address() + " refused request: " + q.Question[0].String())
+				} else {
+					r = exchange
+				}
 			}
 			select {
 			case <-ctx.Done():
