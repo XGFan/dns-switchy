@@ -22,6 +22,7 @@ import (
 func ReadConfig(file *string) (*config.SwitchyConfig, error) {
 	log.Printf("Config: %s", *file)
 	open, err := os.Open(*file)
+	//goland:noinspection GoUnhandledErrorResult
 	defer open.Close()
 	if err != nil {
 		return nil, err
@@ -258,6 +259,7 @@ func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 		Remote:   remoteAddr[:strings.LastIndex(remoteAddr, ":")],
 		Time:     time.Now().UnixMilli() - w.start,
 		Question: fmt.Sprintf("%s %s", dns.TypeToString[w.msg.Question[0].Qtype], w.msg.Question[0].Name),
+		Answer:   fmt.Sprintf("%s", resp.Answer),
 	}
 	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	resp.Id = w.msg.Id
@@ -298,5 +300,6 @@ type StructureLog struct {
 	Remote   string `json:"remote,omitempty"`
 	Time     int64  `json:"time,omitempty"`
 	Question string `json:"question,omitempty"`
+	Answer   string `json:"answer,omitempty"`
 	Error    error  `json:"error,omitempty"`
 }
