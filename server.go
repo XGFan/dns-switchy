@@ -255,11 +255,13 @@ func (w *DnsWriter) RemoteAddr() net.Addr {
 func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 	remoteAddr := w.writer.RemoteAddr().String()
 	structureLog := StructureLog{
-		Resolver: fmt.Sprintf("%s", name),
-		Remote:   remoteAddr[:strings.LastIndex(remoteAddr, ":")],
-		Time:     time.Now().UnixMilli() - w.start,
-		Question: fmt.Sprintf("%s %s", dns.TypeToString[w.msg.Question[0].Qtype], w.msg.Question[0].Name),
-		Answer:   fmt.Sprintf("%s", resp.Answer),
+		Resolver:   fmt.Sprintf("%s", name),
+		Remote:     remoteAddr[:strings.LastIndex(remoteAddr, ":")],
+		Time:       time.Now().UnixMilli() - w.start,
+		Type:       dns.TypeToString[w.msg.Question[0].Qtype],
+		Question:   w.msg.Question[0].Name,
+		RCode:      dns.RcodeToString[resp.Rcode],
+		AnswerSize: len(resp.Answer),
 	}
 	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	resp.Id = w.msg.Id
@@ -277,7 +279,8 @@ func (w *DnsWriter) Fail(name interface{}, err error) {
 		Resolver: fmt.Sprintf("%s", name),
 		Remote:   remoteAddr[:strings.LastIndex(remoteAddr, ":")],
 		Time:     time.Now().UnixMilli() - w.start,
-		Question: fmt.Sprintf("%s %s", dns.TypeToString[w.msg.Question[0].Qtype], w.msg.Question[0].Name),
+		Type:     dns.TypeToString[w.msg.Question[0].Qtype],
+		Question: w.msg.Question[0].Name,
 		Error:    err,
 	}
 	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
@@ -296,10 +299,12 @@ func checkAndUnify(msg *dns.Msg) error {
 }
 
 type StructureLog struct {
-	Resolver string `json:"resolver,omitempty"`
-	Remote   string `json:"remote,omitempty"`
-	Time     int64  `json:"time,omitempty"`
-	Question string `json:"question,omitempty"`
-	Answer   string `json:"answer,omitempty"`
-	Error    error  `json:"error,omitempty"`
+	Resolver   string `json:"resolver,omitempty"`
+	Remote     string `json:"remote,omitempty"`
+	Time       int64  `json:"time,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Question   string `json:"question,omitempty"`
+	RCode      string `json:"rCode,omitempty"`
+	AnswerSize int    `json:"answerSize"`
+	Error      error  `json:"error,omitempty"`
 }
