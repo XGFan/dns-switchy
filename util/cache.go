@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -27,8 +28,7 @@ func (n NoCache) Get(_ *dns.Question) *dns.Msg {
 
 type DnsCache struct {
 	ttl         time.Duration
-	cache       map[dns.Question]CacheItem
-	writeChan   chan WriteTask
+	cache       sync.Map
 	cleanTicker *time.Ticker
 	closeChan   chan struct{}
 }
@@ -37,7 +37,6 @@ func (dnsCache *DnsCache) Close() {
 	dnsCache.cleanTicker.Stop()
 	dnsCache.closeChan <- struct{}{}
 	close(dnsCache.closeChan)
-	close(dnsCache.writeChan)
 	log.Printf("%s closed", dnsCache)
 }
 
@@ -57,18 +56,26 @@ type WriteTask struct {
 }
 
 func (dnsCache *DnsCache) Get(q *dns.Question) *dns.Msg {
-	c, exist := dnsCache.cache[*q]
-	if exist && c.validBefore.After(time.Now()) {
-		return &c.item
+	c, exist := dnsCache.cache.Load(*q)
+	if exist && c.(CacheItem).validBefore.After(time.Now()) {
+		item := c.(CacheItem).item
+		return &item
 	}
 	return nil
 }
 
 func (dnsCache *DnsCache) Set(q *dns.Question, msg *dns.Msg, ttl time.Duration) {
-	dnsCache.writeChan <- WriteTask{
-		question: q,
-		msg:      msg,
-		ttl:      ttl,
+	if ttl == 0 { //未设置ttl，使用默认ttl
+		ttl = dnsCache.ttl
+	}
+	if ttl > 0 {
+		dnsCache.cache.Store(
+			*q,
+			CacheItem{
+				validBefore: time.Now().Add(ttl),
+				item:        *msg,
+			},
+		)
 	}
 }
 
@@ -77,28 +84,18 @@ func (dnsCache *DnsCache) writeAndClean() {
 		select {
 		case <-dnsCache.closeChan:
 			return
-		case task := <-dnsCache.writeChan:
-			var ttl time.Duration
-			if task.ttl == 0 { //未设置ttl，使用默认ttl
-				ttl = dnsCache.ttl
-			} else {
-				ttl = task.ttl
-			}
-			if ttl > 0 {
-				dnsCache.cache[*task.question] = CacheItem{
-					validBefore: time.Now().Add(ttl),
-					item:        *task.msg,
-				}
-			}
 		case <-dnsCache.cleanTicker.C:
-			before := len(dnsCache.cache)
-			for d, item := range dnsCache.cache {
-				if item.validBefore.Before(time.Now()) {
-					delete(dnsCache.cache, d)
+			before := 0
+			clean := 0
+			dnsCache.cache.Range(func(key, item any) bool {
+				before += 1
+				if item.(CacheItem).validBefore.Before(time.Now()) {
+					dnsCache.cache.Delete(key)
+					clean += 1
 				}
-			}
-			after := len(dnsCache.cache)
-			log.Printf("Clean cache: from %d to %d", before, after)
+				return true
+			})
+			log.Printf("Clean cache: from %d to %d", before, before-clean)
 		}
 	}
 }
@@ -110,8 +107,7 @@ func NewDnsCache(ttl time.Duration) Cache {
 	}
 	dnsCache := &DnsCache{
 		ttl:         ttl,
-		cache:       make(map[dns.Question]CacheItem, 0),
-		writeChan:   make(chan WriteTask, 10),
+		cache:       sync.Map{},
 		cleanTicker: time.NewTicker(ttl),
 		closeChan:   make(chan struct{}, 0),
 	}

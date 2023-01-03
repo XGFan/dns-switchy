@@ -39,6 +39,7 @@ func (q QueryTypeSet) MatchQueryType(queryType uint16) bool {
 	_, exist := q[queryType]
 	return exist
 }
+
 func (q QueryTypeSet) String() string {
 	return fmt.Sprintf("QueryTypeSet(%d)", len(q))
 }
