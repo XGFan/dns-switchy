@@ -25,6 +25,7 @@ type Forward struct {
 	util.DomainMatcher
 	clientIP string
 	ttl      time.Duration
+	stat     ForwardStat
 }
 
 func (upstreamDNS *Forward) TTL() time.Duration {
@@ -49,7 +50,56 @@ func (upstreamDNS *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	if upstreamDNS.clientIP != "" {
 		setECS(msg, net.ParseIP(upstreamDNS.clientIP))
 	}
-	return upstreamDNS.Exchange(msg)
+	if upstreamDNS.stat.alive {
+		exchange, err := upstreamDNS.Exchange(msg)
+		if upstreamDNS.stat.checkStatus(err) {
+			log.Printf("%s is dead, will skip", upstreamDNS.String())
+		}
+		return exchange, err
+	} else {
+		go func() {
+			_, err := upstreamDNS.Exchange(msg)
+			if upstreamDNS.stat.checkStatus(err) {
+				log.Printf("%s is alive, will cusome", upstreamDNS.String())
+			}
+		}()
+		return nil, errors.New(upstreamDNS.String() + ": too many fail, just skip")
+	}
+}
+
+type ForwardStat struct {
+	alive        bool
+	failCount    int
+	successCount int
+}
+
+func (stat *ForwardStat) checkStatus(e error) (changed bool) {
+	if stat.alive {
+		if e != nil {
+			stat.failCount += 1
+			if stat.failCount >= 5 {
+				stat.failCount = 0
+				stat.successCount = 0
+				stat.alive = false
+				changed = true
+			}
+		} else {
+			stat.failCount = 0
+		}
+	} else {
+		if e != nil {
+			stat.successCount = 0
+		} else {
+			stat.successCount += 1
+			if stat.successCount >= 5 {
+				stat.failCount = 0
+				stat.successCount = 0
+				stat.alive = true
+				changed = true
+			}
+		}
+	}
+	return
 }
 
 func setECS(m *dns.Msg, ip net.IP) {
@@ -156,6 +206,7 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 		Upstream:      up,
 		DomainMatcher: util.NewDomainMatcher(config.Rule),
 		ttl:           config.TTL,
+		stat:          ForwardStat{alive: true},
 	}, nil
 }
 
@@ -174,5 +225,6 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 		DomainMatcher: util.NewDomainMatcher(config.Rule),
 		clientIP:      config.Config.ClientIP,
 		ttl:           config.TTL,
+		stat:          ForwardStat{alive: true},
 	}, nil
 }
