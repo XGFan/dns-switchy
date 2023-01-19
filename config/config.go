@@ -100,7 +100,6 @@ type DnsConfig struct {
 	Bootstrap []string      `yaml:"bootstrap,omitempty"`
 	ServerIP  []net.IP      `yaml:"serverIP,omitempty"`
 	Timeout   time.Duration `yaml:"timeout,omitempty"`
-	ClientIP  string        `yaml:"clientIP,omitempty"`
 }
 
 func (f ForwardConfig) Type() ResolverType {
