@@ -63,7 +63,6 @@ func (s *DnsSwitchyServer) Shutdown() {
 	for _, dnsResolver := range s.resolvers {
 		dnsResolver.Close()
 	}
-	s.dnsCache.Close()
 	s.wg.Wait()
 }
 
