@@ -44,6 +44,19 @@ func (q QueryTypeSet) String() string {
 	return fmt.Sprintf("QueryTypeSet(%d)", len(q))
 }
 
+type ComplexDomainSet struct {
+	WhiteList DomainSet
+	BlackList DomainSet
+}
+
+func (c *ComplexDomainSet) MatchDomain(domain string) bool {
+	return (!c.BlackList.MatchDomain(domain)) && c.WhiteList.MatchDomain(domain)
+}
+
+func (c *ComplexDomainSet) String() string {
+	return "ComplexDomainSet"
+}
+
 type DomainSet map[string]DomainSet
 
 func (set DomainSet) String() string {
@@ -117,7 +130,17 @@ func NewDomainSet(domains []string) DomainSet {
 func NewDomainMatcher(rules []string) DomainMatcher {
 	domains := config.ParseRule(rules)
 	if len(domains) > 0 {
-		return NewDomainSet(domains)
+		c := new(ComplexDomainSet)
+		c.BlackList = make(DomainSet, 0)
+		c.WhiteList = make(DomainSet, 0)
+		for _, domain := range domains {
+			if strings.HasPrefix(domain, "!") {
+				c.BlackList.addDomain(domain)
+			} else {
+				c.WhiteList.addDomain(domain)
+			}
+		}
+		return c
 	} else {
 		return AcceptAll
 	}
