@@ -113,6 +113,7 @@ func (fileResolver *FileResolver) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	m := new(dns.Msg)
 	m.SetReply(msg)
 	m.Rcode = dns.RcodeSuccess
+	m.RecursionAvailable = true
 	if rr != nil {
 		m.Answer = append(m.Answer, rr)
 	}
