@@ -8,8 +8,8 @@ import (
 )
 
 type Cache interface {
-	Set(q *dns.Question, msg *dns.Msg, ttl time.Duration)
-	Get(q *dns.Question) *dns.Msg
+	Set(q dns.Question, msg dns.Msg, ttl time.Duration)
+	Get(q dns.Question) dns.Msg
 }
 type NoCache struct {
 }
@@ -17,11 +17,11 @@ type NoCache struct {
 func (n NoCache) Close() {
 }
 
-func (n NoCache) Set(_ *dns.Question, _ *dns.Msg, _ time.Duration) {
+func (n NoCache) Set(_ dns.Question, _ dns.Msg, _ time.Duration) {
 }
 
-func (n NoCache) Get(_ *dns.Question) *dns.Msg {
-	return nil
+func (n NoCache) Get(_ dns.Question) dns.Msg {
+	return dns.Msg{}
 }
 
 func NewDnsCache(ttl time.Duration) Cache {
@@ -29,5 +29,5 @@ func NewDnsCache(ttl time.Duration) Cache {
 		log.Println("cache is disabled")
 		return &NoCache{}
 	}
-	return utils.NewTTlCache[*dns.Question, *dns.Msg](ttl)
+	return utils.NewTTlCache[dns.Question, dns.Msg](ttl)
 }

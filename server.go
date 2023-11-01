@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -131,12 +132,14 @@ func (s *DnsSwitchyServer) httpHandler() http.Handler {
 	})
 }
 
+var NoCache = dns.Msg{}
+
 func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg) {
 	if checkAndUnify(msg) != nil {
 		log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
 	}
-	if cached := s.dnsCache.Get(&msg.Question[0]); cached != nil {
-		resultWriter.Success(s.dnsCache, cached)
+	if cached := s.dnsCache.Get(msg.Question[0]); !reflect.DeepEqual(cached, NoCache) {
+		resultWriter.Success("dnsCache", &cached)
 		return
 	} else {
 		for i, upstream := range s.resolvers {
@@ -150,7 +153,7 @@ func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg
 					}
 				} else {
 					if resp.Rcode == dns.RcodeSuccess {
-						s.dnsCache.Set(&msg.Question[0], resp, upstream.TTL())
+						s.dnsCache.Set(msg.Question[0], *resp, upstream.TTL())
 					}
 					resultWriter.Success(upstream, resp)
 				}
