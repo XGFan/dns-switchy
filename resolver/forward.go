@@ -9,6 +9,7 @@ import (
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
 	"log"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -149,10 +150,15 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 	var err error
 	upstreams := make([]upstream.Upstream, 0)
 	for _, upConfig := range config.Upstreams {
+		var sr = upstream.StaticResolver{}
+		if upConfig.Config.ServerIP != nil {
+			for _, ipa := range upConfig.Config.ServerIP {
+				sr = append(sr, netip.MustParseAddr(ipa.String()))
+			}
+		}
 		one, e := upstream.AddressToUpstream(upConfig.Url, &upstream.Options{
-			Bootstrap:     upConfig.Config.Bootstrap,
-			Timeout:       upConfig.Config.Timeout,
-			ServerIPAddrs: upConfig.Config.ServerIP,
+			Bootstrap: sr,
+			Timeout:   upConfig.Config.Timeout,
 		})
 		if e == nil {
 			upstreams = append(upstreams, one)
@@ -178,10 +184,16 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 }
 
 func NewForward(config *config.ForwardConfig) (*Forward, error) {
+	var sr = upstream.StaticResolver{}
+	if config.Config.ServerIP != nil {
+		for _, ipa := range config.Config.ServerIP {
+			sr = append(sr, netip.MustParseAddr(ipa.String()))
+		}
+	}
+
 	up, err := upstream.AddressToUpstream(config.Url, &upstream.Options{
-		Bootstrap:     config.Config.Bootstrap,
-		Timeout:       config.Config.Timeout,
-		ServerIPAddrs: config.Config.ServerIP,
+		Bootstrap: sr,
+		Timeout:   config.Config.Timeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)

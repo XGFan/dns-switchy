@@ -62,6 +62,7 @@ const (
 	FILE          ResolverType = "file"
 	FORWARD       ResolverType = "forward"
 	FORWARD_GROUP ResolverType = "forward-group"
+	MOCK          ResolverType = "mock"
 )
 
 type ResolverConfig interface {
@@ -97,9 +98,8 @@ type ForwardConfig struct {
 }
 
 type DnsConfig struct {
-	Bootstrap []string      `yaml:"bootstrap,omitempty"`
-	ServerIP  []net.IP      `yaml:"serverIP,omitempty"`
-	Timeout   time.Duration `yaml:"timeout,omitempty"`
+	ServerIP []net.IP      `yaml:"serverIP,omitempty"`
+	Timeout  time.Duration `yaml:"timeout,omitempty"`
 }
 
 func (f ForwardConfig) Type() ResolverType {
@@ -122,6 +122,16 @@ func (f ForwardGroupConfig) Type() ResolverType {
 	return FORWARD_GROUP
 }
 
+type MockConfig struct {
+	Rule      []string `yaml:"rule,omitempty"`
+	QueryType []string `yaml:"queryType,omitempty"`
+	Answer    string
+}
+
+func (m MockConfig) Type() ResolverType {
+	return MOCK
+}
+
 func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	_config := _SwitchyConfig{}
 	err := yaml.NewDecoder(contentReader).Decode(&_config)
@@ -141,6 +151,8 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 			filter = &ForwardConfig{}
 		case FORWARD_GROUP:
 			filter = &ForwardGroupConfig{}
+		case MOCK:
+			filter = &MockConfig{}
 		default:
 			return nil, fmt.Errorf("unknown resolver type: %s", resolver["type"])
 		}

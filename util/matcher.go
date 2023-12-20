@@ -135,7 +135,7 @@ func NewDomainMatcher(rules []string) DomainMatcher {
 		c.WhiteList = make(DomainSet, 0)
 		for _, domain := range domains {
 			if strings.HasPrefix(domain, "!") {
-				c.BlackList.addDomain(domain)
+				c.BlackList.addDomain(strings.TrimPrefix(domain, "!"))
 			} else {
 				c.WhiteList.addDomain(domain)
 			}
