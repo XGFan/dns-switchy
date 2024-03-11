@@ -51,9 +51,6 @@ func (m *Mock) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	res.RecursionAvailable = true
 	if rr != nil {
 		res.Answer = append(res.Answer, rr)
-		res.Rcode = dns.RcodeSuccess
-	} else {
-		res.Rcode = dns.RcodeNameError
 	}
 	return res, nil
 }
