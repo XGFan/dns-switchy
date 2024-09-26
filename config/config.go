@@ -93,6 +93,7 @@ func (h FileConfig) Type() ResolverType {
 type ForwardConfig struct {
 	Name           string        `yaml:"name,omitempty"`
 	TTL            time.Duration `yaml:"ttl,omitempty"`
+	BreakOnFail    bool          `yaml:"break-on-fail,omitempty"`
 	Rule           []string      `yaml:"rule,omitempty"`
 	UpstreamConfig `yaml:",inline"`
 }
@@ -112,10 +113,11 @@ type UpstreamConfig struct {
 }
 
 type ForwardGroupConfig struct {
-	Name      string           `yaml:"name,omitempty"`
-	TTL       time.Duration    `yaml:"ttl,omitempty"`
-	Rule      []string         `yaml:"rule,omitempty"`
-	Upstreams []UpstreamConfig `yaml:"upstreams,omitempty"`
+	Name        string           `yaml:"name,omitempty"`
+	TTL         time.Duration    `yaml:"ttl,omitempty"`
+	Rule        []string         `yaml:"rule,omitempty"`
+	BreakOnFail bool             `yaml:"break-on-fail,omitempty"`
+	Upstreams   []UpstreamConfig `yaml:"upstreams,omitempty"`
 }
 
 func (f ForwardGroupConfig) Type() ResolverType {

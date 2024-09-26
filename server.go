@@ -146,6 +146,10 @@ func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg
 			if upstream.Accept(msg) {
 				resp, err := upstream.Resolve(msg)
 				if err != nil {
+					if errors.Is(err, resolver.BreakError) {
+						resultWriter.Fail(upstream, err)
+						return
+					}
 					if i < len(s.resolvers)-1 {
 						continue
 					} else {

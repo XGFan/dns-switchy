@@ -14,12 +14,15 @@ import (
 	"time"
 )
 
+var BreakError = errors.New("stop on fail")
+
 type Forward struct {
 	Name string
 	upstream.Upstream
 	util.DomainMatcher
-	ttl  time.Duration
-	stat ForwardStat
+	ttl         time.Duration
+	stat        ForwardStat
+	breakOnFail bool
 }
 
 func (forward *Forward) TTL() time.Duration {
@@ -46,6 +49,11 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 		resp, err := forward.Exchange(msg)
 		if forward.stat.checkStatus(err) {
 			log.Printf("%s is dead, will skip", forward.String())
+		}
+		if err != nil {
+			if forward.breakOnFail {
+				return resp, BreakError
+			}
 		}
 		return resp, err
 	} else {
@@ -180,6 +188,7 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 		DomainMatcher: util.NewDomainMatcher(config.Rule),
 		ttl:           config.TTL,
 		stat:          ForwardStat{alive: true},
+		breakOnFail:   config.BreakOnFail,
 	}, nil
 }
 
@@ -204,5 +213,6 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 		DomainMatcher: util.NewDomainMatcher(config.Rule),
 		ttl:           config.TTL,
 		stat:          ForwardStat{alive: true},
+		breakOnFail:   config.BreakOnFail,
 	}, nil
 }
