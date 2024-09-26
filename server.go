@@ -132,13 +132,11 @@ func (s *DnsSwitchyServer) httpHandler() http.Handler {
 	})
 }
 
-var NoCache = dns.Msg{}
-
 func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg) {
 	if checkAndUnify(msg) != nil {
 		log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
 	}
-	if cached := s.dnsCache.Get(msg.Question[0]); !reflect.DeepEqual(cached, NoCache) {
+	if cached := s.dnsCache.Get(msg.Question[0]); !reflect.DeepEqual(cached, util.None) {
 		resultWriter.Success("dnsCache", &cached)
 		return
 	} else {

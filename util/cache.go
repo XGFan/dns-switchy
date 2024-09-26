@@ -11,6 +11,9 @@ type Cache interface {
 	Set(q dns.Question, msg dns.Msg, ttl time.Duration)
 	Get(q dns.Question) dns.Msg
 }
+
+var None = dns.Msg{}
+
 type NoCache struct {
 }
 
@@ -21,7 +24,7 @@ func (n NoCache) Set(_ dns.Question, _ dns.Msg, _ time.Duration) {
 }
 
 func (n NoCache) Get(_ dns.Question) dns.Msg {
-	return dns.Msg{}
+	return None
 }
 
 func NewDnsCache(ttl time.Duration) Cache {

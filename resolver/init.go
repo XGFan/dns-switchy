@@ -25,12 +25,12 @@ func createResolver(resolverConfig config.ResolverConfig) (DnsResolver, error) {
 		return NewFilter(resolverConfig.(*config.FilterConfig))
 	case config.FILE:
 		return NewFile(resolverConfig.(*config.FileConfig))
-	case config.FORWARD:
+	case config.FORWARD, config.FORWARD_GROUP:
 		return NewForward(resolverConfig.(*config.ForwardConfig))
-	case config.FORWARD_GROUP:
-		return NewForwardGroup(resolverConfig.(*config.ForwardGroupConfig))
 	case config.MOCK:
 		return NewMock(resolverConfig.(*config.MockConfig))
+	case config.PRELOADER:
+		return NewPreloader(resolverConfig.(*config.PreloaderConfig))
 
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown resolver type %s", resolverConfig.Type()))

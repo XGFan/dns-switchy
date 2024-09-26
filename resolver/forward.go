@@ -156,22 +156,20 @@ func (mu MultiUpstream) Address() string {
 	return strings.Join(addresses, ",")
 }
 
-func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
-	var up upstream.Upstream
+func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	var err error
 	upstreams := make([]upstream.Upstream, 0)
-	for _, upConfig := range config.Upstreams {
-		var sr = upstream.StaticResolver{}
-		if upConfig.Config.ServerIP != nil {
-			for _, ipa := range upConfig.Config.ServerIP {
-				sr = append(sr, netip.MustParseAddr(ipa.String()))
-			}
+	if config.UpstreamConfig.Url != "" {
+		firstLevel, err := createUpStream(config.UpstreamConfig)
+		if err == nil {
+			upstreams = append(upstreams, firstLevel)
+		} else {
+			log.Printf("init first class upstream with %v fail: %v ", config.UpstreamConfig, err)
 		}
-		one, e := upstream.AddressToUpstream(upConfig.Url, &upstream.Options{
-			Bootstrap: sr,
-			Timeout:   upConfig.Config.Timeout,
-		})
-		if e == nil {
+	}
+	for _, upConfig := range config.Upstreams {
+		one, err := createUpStream(upConfig)
+		if err == nil {
 			upstreams = append(upstreams, one)
 		} else {
 			log.Printf("init upstream with %v fail: %v ", upConfig, err)
@@ -180,7 +178,7 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 	if len(upstreams) == 0 {
 		err = fmt.Errorf("all url fails")
 	}
-	up = MultiUpstream(upstreams)
+	up := MultiUpstream(upstreams)
 
 	if err != nil {
 		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)
@@ -195,27 +193,16 @@ func NewForwardGroup(config *config.ForwardGroupConfig) (*Forward, error) {
 	}, nil
 }
 
-func NewForward(config *config.ForwardConfig) (*Forward, error) {
+func createUpStream(upConfig config.UpstreamConfig) (upstream.Upstream, error) {
 	var sr = upstream.StaticResolver{}
-	if config.Config.ServerIP != nil {
-		for _, ipa := range config.Config.ServerIP {
+	if upConfig.Config.ServerIP != nil {
+		for _, ipa := range upConfig.Config.ServerIP {
 			sr = append(sr, netip.MustParseAddr(ipa.String()))
 		}
 	}
-
-	up, err := upstream.AddressToUpstream(config.Url, &upstream.Options{
+	one, e := upstream.AddressToUpstream(upConfig.Url, &upstream.Options{
 		Bootstrap: sr,
-		Timeout:   config.Config.Timeout,
+		Timeout:   upConfig.Config.Timeout,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)
-	}
-	return &Forward{
-		Name:          config.Name,
-		Upstream:      up,
-		DomainMatcher: util.NewDomainMatcher(config.Rule),
-		ttl:           config.TTL,
-		stat:          ForwardStat{alive: true},
-		breakOnFail:   config.BreakOnFail,
-	}, nil
+	return one, e
 }

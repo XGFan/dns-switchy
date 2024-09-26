@@ -3,7 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	"io"
 	"io/fs"
 	"log"
@@ -62,6 +62,7 @@ const (
 	FILE          ResolverType = "file"
 	FORWARD       ResolverType = "forward"
 	FORWARD_GROUP ResolverType = "forward-group"
+	PRELOADER     ResolverType = "preloader"
 	MOCK          ResolverType = "mock"
 )
 
@@ -96,6 +97,7 @@ type ForwardConfig struct {
 	BreakOnFail    bool          `yaml:"break-on-fail,omitempty"`
 	Rule           []string      `yaml:"rule,omitempty"`
 	UpstreamConfig `yaml:",inline"`
+	Upstreams      []UpstreamConfig `yaml:"upstreams,omitempty"`
 }
 
 type DnsConfig struct {
@@ -112,16 +114,12 @@ type UpstreamConfig struct {
 	Config DnsConfig `yaml:"config,omitempty"`
 }
 
-type ForwardGroupConfig struct {
-	Name        string           `yaml:"name,omitempty"`
-	TTL         time.Duration    `yaml:"ttl,omitempty"`
-	Rule        []string         `yaml:"rule,omitempty"`
-	BreakOnFail bool             `yaml:"break-on-fail,omitempty"`
-	Upstreams   []UpstreamConfig `yaml:"upstreams,omitempty"`
+type PreloaderConfig struct {
+	ForwardConfig `yaml:",inline"`
 }
 
-func (f ForwardGroupConfig) Type() ResolverType {
-	return FORWARD_GROUP
+func (p PreloaderConfig) Type() ResolverType {
+	return PRELOADER
 }
 
 type MockConfig struct {
@@ -149,12 +147,12 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 			filter = &FilterConfig{}
 		case FILE:
 			filter = &FileConfig{}
-		case FORWARD:
+		case FORWARD, FORWARD_GROUP:
 			filter = &ForwardConfig{}
-		case FORWARD_GROUP:
-			filter = &ForwardGroupConfig{}
 		case MOCK:
 			filter = &MockConfig{}
+		case PRELOADER:
+			filter = &PreloaderConfig{}
 		default:
 			return nil, fmt.Errorf("unknown resolver type: %s", resolver["type"])
 		}
