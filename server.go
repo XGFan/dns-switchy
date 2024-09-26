@@ -156,7 +156,7 @@ func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg
 						resultWriter.Fail(upstream, err)
 					}
 				} else {
-					if resp.Rcode == dns.RcodeSuccess {
+					if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) > 0 {
 						s.dnsCache.Set(msg.Question[0], *resp, upstream.TTL())
 					}
 					resultWriter.Success(upstream, resp)

@@ -9,7 +9,7 @@ steps:
       GOPROXY: https://registry.test4x.com/repository/go-proxy/
       CGO_ENABLED: 0
       GOOS: linux
-      GOARCH: amd64
+      GOARCH: arm64
     commands:
       - go build
       - ls -alh
