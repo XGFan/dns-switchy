@@ -63,6 +63,9 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 				log.Printf("%s is alive, will cusome", forward.String())
 			}
 		}()
+		if forward.breakOnFail {
+			return nil, BreakError
+		}
 		return nil, errors.New(forward.String() + ": too many fail, just skip")
 	}
 }
