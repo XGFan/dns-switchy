@@ -2,8 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
@@ -19,6 +22,9 @@ func main() {
 	passOrFatal(err)
 	serverChan := make(chan *DnsSwitchyServer, 1)
 	serverChan <- server
+	go func() {
+		fmt.Println(http.ListenAndServe(":6060", nil))
+	}()
 	defer watchConfigFile(file, func(s *string) {
 		newConfig, err := ReadConfig(file)
 		if err != nil {
