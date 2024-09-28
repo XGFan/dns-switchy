@@ -115,6 +115,9 @@ func (mu MultiUpstream) Close() error {
 }
 
 func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
+	if len(mu) == 1 {
+		return mu[0].Exchange(m)
+	}
 	result := make(chan interface{})
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()

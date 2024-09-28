@@ -11,7 +11,7 @@ import (
 type Preloader struct {
 	*Forward
 	dnsCache sync.Map
-	notify   chan struct{}
+	ticker   *time.Ticker
 }
 
 func (pl *Preloader) TTL() time.Duration {
@@ -19,20 +19,16 @@ func (pl *Preloader) TTL() time.Duration {
 }
 
 func (pl *Preloader) Close() {
-	pl.notify <- struct{}{}
+	pl.ticker.Stop()
 	pl.Forward.Close()
 }
 
 func (pl *Preloader) Work() {
 	for {
-		select {
-		case <-pl.notify:
-			log.Printf("preloader %s exit", pl)
-			return
-		default:
+		for range pl.ticker.C {
 			pl.dnsCache.Range(func(key, value interface{}) bool {
 				v := value.(TimeItem)
-				if v.CreateAt.Add(pl.ttl).After(time.Now()) {
+				if v.ExpiredAt.After(time.Now()) {
 					return true
 				}
 				newMsg := new(dns.Msg)
@@ -44,12 +40,13 @@ func (pl *Preloader) Work() {
 				return true
 			})
 		}
+		log.Printf("preloader %s exit", pl)
 	}
 }
 
 type TimeItem struct {
-	CreateAt time.Time
-	Item     *dns.Msg
+	ExpiredAt time.Time
+	Item      *dns.Msg
 }
 
 func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
@@ -57,7 +54,7 @@ func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
 	if err == nil && len(resolve.Answer) > 0 {
 		pl.dnsCache.Store(
 			msg.Question[0],
-			TimeItem{time.Now(), resolve},
+			TimeItem{time.Now().Add(pl.ttl), resolve},
 		)
 	}
 	return resolve, err
@@ -80,7 +77,7 @@ func NewPreloader(pc *config.PreloaderConfig) (*Preloader, error) {
 	p := &Preloader{
 		Forward:  forward,
 		dnsCache: sync.Map{},
-		notify:   make(chan struct{}),
+		ticker:   time.NewTicker(pc.TTL),
 	}
 	go p.Work()
 	return p, nil
