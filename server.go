@@ -274,9 +274,7 @@ func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 		resp.RecursionDesired = w.msg.RecursionDesired // Copy rd bit
 		resp.CheckingDisabled = w.msg.CheckingDisabled // Copy cd bit
 	}
-	for resp.Len() >= 512 && len(resp.Answer) > 1 {
-		resp.Answer = resp.Answer[:len(resp.Answer)-1]
-	}
+	resp.Truncate(512)
 	_ = w.writer.WriteMsg(resp)
 }
 
