@@ -40,7 +40,7 @@ steps:
         from_secret: ssh_key
       port: 22
       script:
-        - mv ~/dns-switchy /etc/dns-switchy/dns-switchy
+        - mv ~/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy
         - /etc/init.d/dns-switchy restart
   - name: notification
     when:
