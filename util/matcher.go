@@ -89,7 +89,7 @@ func (set DomainSet) matchBytes(domain []byte) bool {
 	}
 }
 
-var _included = make(map[string]DomainSet, 0)
+var _included = make(map[string]DomainSet)
 
 func (set DomainSet) addDomain(domain string) {
 	index := strings.LastIndex(domain, ".")
@@ -109,7 +109,7 @@ func (set DomainSet) addDomain(domain string) {
 }
 
 func newSubSet(domain string) DomainSet {
-	set := make(DomainSet, 0)
+	set := make(DomainSet)
 	index := strings.LastIndex(domain, ".")
 	if index == -1 {
 		set[domain] = _included
@@ -120,7 +120,7 @@ func newSubSet(domain string) DomainSet {
 }
 
 func NewDomainSet(domains []string) DomainSet {
-	set := make(DomainSet, 0)
+	set := make(DomainSet)
 	for _, domain := range domains {
 		set.addDomain(domain)
 	}
@@ -131,8 +131,8 @@ func NewDomainMatcher(rules []string) DomainMatcher {
 	domains := config.ParseRule(rules)
 	if len(domains) > 0 {
 		c := new(ComplexDomainSet)
-		c.BlackList = make(DomainSet, 0)
-		c.WhiteList = make(DomainSet, 0)
+		c.BlackList = make(DomainSet)
+		c.WhiteList = make(DomainSet)
 		for _, domain := range domains {
 			if strings.HasPrefix(domain, "!") {
 				c.BlackList.addDomain(strings.TrimPrefix(domain, "!"))

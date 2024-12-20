@@ -6,7 +6,7 @@ import (
 	"github.com/v2fly/v2ray-core/v4/app/router"
 	_ "github.com/v2fly/v2ray-core/v4/infra/conf/geodata/standard"
 	"google.golang.org/protobuf/proto"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,7 +19,7 @@ func main() {
 	flag.Parse()
 	resp, err := http.Get("https://raw.githubusercontent.com/v2fly/domain-list-community/release/dlc.dat")
 	failOnError(err)
-	all, err := ioutil.ReadAll(resp.Body)
+	all, err := io.ReadAll(resp.Body)
 	failOnError(err)
 	var geositeList router.GeoSiteList
 	err = proto.Unmarshal(all, &geositeList)
