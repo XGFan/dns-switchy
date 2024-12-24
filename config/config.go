@@ -19,7 +19,7 @@ import (
 var BasePath string
 
 type SwitchyConfig struct {
-	Port      int
+	Addr      string
 	TTL       time.Duration
 	Http      *HttpConfig
 	Resolvers []ResolverConfig
@@ -49,7 +49,7 @@ func (h *HttpConfig) CreateListener() (net.Listener, error) {
 }
 
 type _SwitchyConfig struct {
-	Port      int                      `yaml:"port,omitempty"`
+	Addr      string                   `yaml:"addr,omitempty"`
 	TTL       time.Duration            `yaml:"ttl,omitempty"`
 	Http      string                   `yaml:"http,omitempty"`
 	Resolvers []map[string]interface{} `yaml:"resolvers,omitempty"`
@@ -167,7 +167,7 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 		return nil, err
 	}
 	return &SwitchyConfig{
-		Port:      _config.Port,
+		Addr:      _config.Addr,
 		TTL:       _config.TTL,
 		Http:      httpConfig,
 		Resolvers: resolverConfigs,

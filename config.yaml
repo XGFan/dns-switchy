@@ -1,4 +1,4 @@
-port: 1053 #监听端口，目前只支持UDP
+addr: ":1053" #监听端口，目前只支持UDP
 ttl: 5m #全局缓存时间
 resolvers:
   - type: filter #过滤器 ，只针对类型

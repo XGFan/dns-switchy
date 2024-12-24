@@ -69,7 +69,7 @@ func (s *DnsSwitchyServer) Shutdown() {
 
 func (s *DnsSwitchyServer) Start() {
 	printRuntimeInfo()
-	log.Printf("Started at %d\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Port, s.config.Http, s.config.TTL, s.resolvers)
+	log.Printf("Started at %s\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Addr, s.config.Http, s.config.TTL, s.resolvers)
 	go s.StartPlainUDPServer()
 	go s.StartHttpServer()
 	s.wg.Wait()
@@ -79,9 +79,11 @@ func (s *DnsSwitchyServer) StartPlainUDPServer() {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	s.udpServer = &dns.Server{
-		Net:     "udp",
-		Addr:    fmt.Sprintf(":%d", s.config.Port),
-		Handler: s.plainUDPHandler(),
+		Net:       "udp",
+		Addr:      s.config.Addr,
+		Handler:   s.plainUDPHandler(),
+		ReusePort: true,
+		ReuseAddr: true,
 	}
 	retry(s.udpServer.ListenAndServe)
 }

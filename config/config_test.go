@@ -19,7 +19,7 @@ func Test_parse(t *testing.T) {
 			t.Error(err)
 		}
 		target := &SwitchyConfig{
-			Port: 1053,
+			Addr: ":1053",
 			TTL:  5 * time.Minute,
 			Resolvers: []ResolverConfig{
 				&FilterConfig{QueryType: []string{"TXT"}},
@@ -74,7 +74,7 @@ func Test_parse(t *testing.T) {
 					},
 				},
 			}}
-		if !reflect.DeepEqual(got.Port, target.Port) {
+		if !reflect.DeepEqual(got.Addr, target.Addr) {
 			t.Errorf("got %+v, want %+v", got, target)
 		}
 		if !reflect.DeepEqual(got.TTL, target.TTL) {
