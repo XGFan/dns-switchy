@@ -56,9 +56,17 @@ func (m *Mock) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 }
 
 func NewMock(config *config.MockConfig) (*Mock, error) {
+	queryTypeMatcher, err := util.NewQueryTypeMatcher(config.QueryType)
+	if err != nil {
+		return nil, fmt.Errorf("init query type matcher fail: %w", err)
+	}
+	domainMatcher, err := util.NewDomainMatcher(config.Rule)
+	if err != nil {
+		return nil, fmt.Errorf("init domain matcher fail: %w", err)
+	}
 	return &Mock{
-		QueryTypeMatcher: util.NewQueryTypeMatcher(config.QueryType),
-		DomainMatcher:    util.NewDomainMatcher(config.Rule),
+		QueryTypeMatcher: queryTypeMatcher,
+		DomainMatcher:    domainMatcher,
 		Answer:           config.Answer,
 	}, nil
 }

@@ -7,9 +7,12 @@ import (
 )
 
 func TestFilter(t *testing.T) {
-	filter, _ := NewFilter(&config.FilterConfig{
+	filter, err := NewFilter(&config.FilterConfig{
 		QueryType: []string{"AAAA"},
 	})
+	if err != nil {
+		t.Fatalf("NewFilter() error = %v", err)
+	}
 
 	tests := []struct {
 		question *dns.Msg

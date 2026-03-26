@@ -2,10 +2,11 @@ package util
 
 import (
 	"bytes"
-	"dns-switchy/config"
 	"fmt"
-	"github.com/miekg/dns"
 	"strings"
+
+	"dns-switchy/config"
+	"github.com/miekg/dns"
 )
 
 type DomainMatcher interface {
@@ -13,6 +14,10 @@ type DomainMatcher interface {
 }
 
 type QueryTypeMatcher interface {
+	MatchQueryType(queryType uint16) bool
+}
+
+type SourceMatcher interface {
 	MatchQueryType(queryType uint16) bool
 }
 
@@ -50,6 +55,10 @@ type ComplexDomainSet struct {
 }
 
 func (c *ComplexDomainSet) MatchDomain(domain string) bool {
+	domain = normalizeDomain(domain)
+	if len(c.WhiteList) == 0 {
+		return !c.BlackList.MatchDomain(domain)
+	}
 	return (!c.BlackList.MatchDomain(domain)) && c.WhiteList.MatchDomain(domain)
 }
 
@@ -59,63 +68,80 @@ func (c *ComplexDomainSet) String() string {
 
 type DomainSet map[string]DomainSet
 
+const terminalDomainKey = ""
+
 func (set DomainSet) String() string {
 	return "DomainSet"
 }
 
 func (set DomainSet) MatchDomain(domain string) bool {
-	return set.matchBytes([]byte(domain))
+	return set.matchBytes([]byte(normalizeDomain(domain)))
 }
 
 func (set DomainSet) matchString(domain string) bool {
+	if set.hasTerminal() {
+		return true
+	}
 	index := strings.LastIndex(domain, ".")
 	if index == -1 {
-		_, ok := set[domain]
-		return ok
+		child, exist := set[domain]
+		return exist && child.hasTerminal()
 	} else {
 		subSet, exist := set[domain[index+1:]]
-		return exist && (len(subSet) == 0 || subSet.MatchDomain(domain[:index]))
+		return exist && subSet.matchString(domain[:index])
 	}
 }
 
 func (set DomainSet) matchBytes(domain []byte) bool {
+	if set.hasTerminal() {
+		return true
+	}
 	index := bytes.LastIndexByte(domain, '.')
 	if index == -1 {
-		_, ok := set[string(domain)]
-		return ok
+		child, exist := set[string(domain)]
+		return exist && child.hasTerminal()
 	} else {
 		subSet, exist := set[string(domain[index+1:])]
-		return exist && (len(subSet) == 0 || subSet.matchBytes(domain[:index]))
+		return exist && subSet.matchBytes(domain[:index])
 	}
+}
+
+func (set DomainSet) hasTerminal() bool {
+	_, ok := set[terminalDomainKey]
+	return ok
 }
 
 var _included = make(map[string]DomainSet)
 
 func (set DomainSet) addDomain(domain string) {
+	domain = normalizeDomain(domain)
+	if domain == "" {
+		return
+	}
 	index := strings.LastIndex(domain, ".")
 	if index == -1 {
-		set[domain] = _included
+		child, exist := set[domain]
+		if !exist {
+			child = make(DomainSet)
+			set[domain] = child
+		}
+		child[terminalDomainKey] = _included
 	} else {
 		suffix := domain[index+1:]
 		subSet, exist := set[suffix]
 		if exist {
-			if len(subSet) != 0 {
-				subSet.addDomain(domain[:index])
-			}
+			subSet.addDomain(domain[:index])
 		} else {
-			set[suffix] = newSubSet(domain[:index])
+			subSet = make(DomainSet)
+			subSet.addDomain(domain[:index])
+			set[suffix] = subSet
 		}
 	}
 }
 
 func newSubSet(domain string) DomainSet {
 	set := make(DomainSet)
-	index := strings.LastIndex(domain, ".")
-	if index == -1 {
-		set[domain] = _included
-	} else {
-		set[domain[index+1:]] = newSubSet(domain[:index])
-	}
+	set.addDomain(domain)
 	return set
 }
 
@@ -127,33 +153,60 @@ func NewDomainSet(domains []string) DomainSet {
 	return set
 }
 
-func NewDomainMatcher(rules []string) DomainMatcher {
-	domains := config.ParseRule(rules)
+func normalizeDomain(domain string) string {
+	domain = strings.TrimSpace(domain)
+	domain = strings.ToLower(domain)
+	domain = strings.TrimRight(domain, ".")
+	return domain
+}
+
+func NewDomainMatcher(rules []string) (DomainMatcher, error) {
+	domains, err := config.ParseRule(rules)
+	if err != nil {
+		return nil, err
+	}
 	if len(domains) > 0 {
 		c := new(ComplexDomainSet)
 		c.BlackList = make(DomainSet)
 		c.WhiteList = make(DomainSet)
+		added := false
 		for _, domain := range domains {
-			if strings.HasPrefix(domain, "!") {
-				c.BlackList.addDomain(strings.TrimPrefix(domain, "!"))
-			} else {
-				c.WhiteList.addDomain(domain)
+			trimmed := strings.TrimSpace(domain)
+			if trimmed == "" {
+				continue
 			}
+			if strings.HasPrefix(trimmed, "!") {
+				c.BlackList.addDomain(strings.TrimSpace(strings.TrimPrefix(trimmed, "!")))
+			} else {
+				c.WhiteList.addDomain(trimmed)
+			}
+			added = true
 		}
-		return c
+		if added {
+			return c, nil
+		}
+		return AcceptAll, nil
 	} else {
-		return AcceptAll
+		return AcceptAll, nil
 	}
 }
 
-func NewQueryTypeMatcher(queryTypes []string) QueryTypeMatcher {
+func NewQueryTypeMatcher(queryTypes []string) (QueryTypeMatcher, error) {
 	if len(queryTypes) > 0 {
 		m := make(QueryTypeSet)
 		for _, s := range queryTypes {
-			m[dns.StringToType[s]] = struct{}{}
+			name := strings.ToUpper(strings.TrimSpace(s))
+			if name == "" {
+				return nil, fmt.Errorf("unknown query type %q", s)
+			}
+			typeCode, ok := dns.StringToType[name]
+			if !ok {
+				return nil, fmt.Errorf("unknown query type %q", s)
+			}
+			m[typeCode] = struct{}{}
 		}
-		return m
+		return m, nil
 	} else {
-		return AcceptAll
+		return AcceptAll, nil
 	}
 }

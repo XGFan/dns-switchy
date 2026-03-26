@@ -1,12 +1,14 @@
 package main
 
 import (
+	"dns-switchy/config"
 	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"sync"
 )
 
 func main() {
@@ -16,12 +18,10 @@ func main() {
 	if !*ts {
 		log.SetFlags(0)
 	}
-	config, err := ReadConfig(file)
+	conf, err := ReadConfig(file)
 	passOrFatal(err)
-	server, err := Create(config)
-	passOrFatal(err)
-	serverChan := make(chan *DnsSwitchyServer, 1)
-	serverChan <- server
+	configChan := make(chan *config.SwitchyConfig, 1)
+	configChan <- conf
 	go func() {
 		fmt.Println(http.ListenAndServe(":6060", nil))
 	}()
@@ -31,21 +31,31 @@ func main() {
 			log.Printf("Parse new config fail: %s", err)
 			return
 		}
-		newServer, err := Create(newConfig)
-		if err != nil {
-			log.Printf("Create new server fail: %s", err)
-			return
-		}
-		serverChan <- newServer
+		configChan <- newConfig
 	})()
 	var runningServer *DnsSwitchyServer
-	for newServer := range serverChan {
-		if runningServer != nil {
-			runningServer.Shutdown()
+	for newConfig := range configChan {
+		runningServer, err = reloadServer(runningServer, newConfig)
+		if err != nil {
+			if runningServer == nil {
+				passOrFatal(err)
+			}
+			log.Printf("Create new server fail: %s", err)
+			continue
 		}
-		runningServer = newServer
-		runningServer.Start()
 	}
+}
+
+func reloadServer(runningServer *DnsSwitchyServer, conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
+	newServer, err := Create(conf)
+	if err != nil {
+		return runningServer, err
+	}
+	if runningServer != nil {
+		runningServer.Shutdown()
+	}
+	newServer.Start()
+	return newServer, nil
 }
 
 func watchConfigFile(file *string, action func(*string)) func() {
@@ -58,23 +68,46 @@ func watchConfigFile(file *string, action func(*string)) func() {
 	err = watcher.Add(*file)
 	if err != nil {
 		log.Printf("Can not watch file %s, Error: %s", *file, err)
+		_ = watcher.Close()
 		return func() {
 		}
 	}
 	log.Printf("Watching %s", *file)
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if ok && event.Op&fsnotify.Write == fsnotify.Write {
-					log.Println("Event:", event)
-					action(file)
-				}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var closeOnce sync.Once
+	go runConfigWatcher(file, watcher.Events, watcher.Errors, action, stop, done)
+	return func() {
+		closeOnce.Do(func() {
+			close(stop)
+			_ = watcher.Close()
+			<-done
+		})
+	}
+}
+
+func runConfigWatcher(file *string, events <-chan fsnotify.Event, errs <-chan error, action func(*string), stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	for {
+		select {
+		case <-stop:
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				log.Println("Event:", event)
+				action(file)
+			}
+		case err, ok := <-errs:
+			if !ok {
+				return
+			}
+			if err != nil {
+				log.Printf("Watch %s fail: %s", *file, err)
 			}
 		}
-	}()
-	return func() {
-		_ = watcher.Close()
 	}
 }
 

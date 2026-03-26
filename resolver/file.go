@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,10 +56,14 @@ type DomainQuery struct {
 type FileResolver struct {
 	NoCache
 	location      string
+	mu            sync.RWMutex
 	inMemory      QueryMap
 	inConfig      QueryMap
 	refreshTicker *time.Ticker
 	fileParser    FileParser
+	stop          chan struct{}
+	done          chan struct{}
+	closeOnce     sync.Once
 }
 
 func (fileResolver *FileResolver) String() string {
@@ -66,8 +71,14 @@ func (fileResolver *FileResolver) String() string {
 }
 
 func (fileResolver *FileResolver) start() {
-	for range fileResolver.refreshTicker.C {
-		fileResolver.update()
+	defer close(fileResolver.done)
+	for {
+		select {
+		case <-fileResolver.stop:
+			return
+		case <-fileResolver.refreshTicker.C:
+			fileResolver.update()
+		}
 	}
 }
 
@@ -77,23 +88,42 @@ func (fileResolver *FileResolver) update() {
 		log.Println(e)
 		return
 	}
-	fileResolver.inMemory = fileResolver.fileParser.Parse(string(file))
+	inMemory := fileResolver.fileParser.Parse(string(file))
+	fileResolver.mu.Lock()
+	fileResolver.inMemory = inMemory
+	fileResolver.mu.Unlock()
 }
 
 func (fileResolver *FileResolver) Close() {
-	fileResolver.refreshTicker.Stop()
+	fileResolver.closeOnce.Do(func() {
+		if fileResolver.refreshTicker != nil {
+			fileResolver.refreshTicker.Stop()
+		}
+		if fileResolver.stop != nil {
+			close(fileResolver.stop)
+		}
+		if fileResolver.done != nil {
+			<-fileResolver.done
+		}
+	})
 }
 
 func (fileResolver *FileResolver) Accept(msg *dns.Msg) bool {
 	question := msg.Question[0]
-	return fileResolver.inConfig.exist(question.Name, question.Qtype) ||
-		fileResolver.inMemory.exist(question.Name, question.Qtype)
+	if fileResolver.inConfig.exist(question.Name, question.Qtype) {
+		return true
+	}
+	fileResolver.mu.RLock()
+	defer fileResolver.mu.RUnlock()
+	return fileResolver.inMemory.exist(question.Name, question.Qtype)
 }
 
 func (fileResolver *FileResolver) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	question := msg.Question[0]
 	query := DomainQuery{strings.ToLower(question.Name), question.Qtype}
+	fileResolver.mu.RLock()
 	ip := fileResolver.inMemory[query]
+	fileResolver.mu.RUnlock()
 	if ip == "" {
 		ip = fileResolver.inConfig[query]
 	}
@@ -185,6 +215,8 @@ func NewFile(config *config.FileConfig) (*FileResolver, error) {
 		inConfig:      fileParser.Parse(config.ExtraContent),
 		refreshTicker: time.NewTicker(config.RefreshInterval),
 		fileParser:    fileParser,
+		stop:          make(chan struct{}),
+		done:          make(chan struct{}),
 	}
 	resolver.update()
 	go resolver.start()

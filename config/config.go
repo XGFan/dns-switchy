@@ -1,22 +1,22 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
-	"io/fs"
-	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 var BasePath string
+
+var includeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 type SwitchyConfig struct {
 	Addr      string
@@ -134,15 +134,20 @@ func (m MockConfig) Type() ResolverType {
 
 func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	_config := _SwitchyConfig{}
+	basePath := inferParseBasePath(contentReader)
 	err := yaml.NewDecoder(contentReader).Decode(&_config)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing config file: %s", err)
 	}
 	resolverConfigs := make([]ResolverConfig, 0, len(_config.Resolvers))
-	for _, resolver := range _config.Resolvers {
+	for index, resolver := range _config.Resolvers {
+		resolverType, err := extractResolverType(resolver, index)
+		if err != nil {
+			return nil, err
+		}
 		marshal, _ := yaml.Marshal(resolver)
 		var filter ResolverConfig
-		switch ResolverType(resolver["type"].(string)) {
+		switch ResolverType(resolverType) {
 		case FILTER:
 			filter = &FilterConfig{}
 		case FILE:
@@ -154,11 +159,14 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 		case PRELOADER:
 			filter = &PreloaderConfig{}
 		default:
-			return nil, fmt.Errorf("unknown resolver type: %s", resolver["type"])
+			return nil, fmt.Errorf("unknown resolver type: %s", resolverType)
 		}
-		err := yaml.Unmarshal(marshal, filter)
+		err = yaml.Unmarshal(marshal, filter)
 		if err != nil {
-			return nil, fmt.Errorf("marshal resolver type: %s fail, %s", resolver["type"], err)
+			return nil, fmt.Errorf("marshal resolver type: %s fail, %s", resolverType, err)
+		}
+		if err = normalizeResolverRules(filter, basePath); err != nil {
+			return nil, err
 		}
 		resolverConfigs = append(resolverConfigs, filter)
 	}
@@ -174,52 +182,197 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	}, nil
 }
 
-func ParseRule(rules []string) []string {
-	parsedRules := make([]string, 0)
+func ParseRule(rules []string) ([]string, error) {
+	parsedRules, err := parseRule(rules, nil, BasePath)
+	if err != nil {
+		return nil, err
+	}
+	return parsedRules, nil
+}
+
+func extractResolverType(resolver map[string]interface{}, index int) (string, error) {
+	rawType, ok := resolver["type"]
+	if !ok {
+		return "", fmt.Errorf("resolver[%d] missing type", index)
+	}
+	resolverType, ok := rawType.(string)
+	if !ok {
+		return "", fmt.Errorf("resolver[%d] type must be string, got %T", index, rawType)
+	}
+	resolverType = strings.TrimSpace(resolverType)
+	if resolverType == "" {
+		return "", fmt.Errorf("resolver[%d] type must not be empty", index)
+	}
+	return resolverType, nil
+}
+
+func inferParseBasePath(contentReader io.Reader) string {
+	if BasePath != "" {
+		return BasePath
+	}
+
+	type namedReader interface {
+		Name() string
+	}
+
+	readerWithName, ok := contentReader.(namedReader)
+	if !ok {
+		return BasePath
+	}
+
+	fileName := strings.TrimSpace(readerWithName.Name())
+	if fileName == "" {
+		return BasePath
+	}
+
+	absoluteName, err := filepath.Abs(fileName)
+	if err != nil {
+		return filepath.Dir(fileName)
+	}
+	return filepath.Dir(absoluteName)
+}
+
+func normalizeResolverRules(resolverConfig ResolverConfig, basePath string) error {
+	var (
+		rules  []string
+		assign func([]string)
+	)
+
+	switch config := resolverConfig.(type) {
+	case *FilterConfig:
+		rules = config.Rule
+		assign = func(parsed []string) { config.Rule = parsed }
+	case *ForwardConfig:
+		rules = config.Rule
+		assign = func(parsed []string) { config.Rule = parsed }
+	case *PreloaderConfig:
+		rules = config.Rule
+		assign = func(parsed []string) { config.Rule = parsed }
+	case *MockConfig:
+		rules = config.Rule
+		assign = func(parsed []string) { config.Rule = parsed }
+	default:
+		return nil
+	}
+	if rules == nil {
+		return nil
+	}
+
+	parsedRules, err := parseRule(rules, nil, basePath)
+	if err != nil {
+		return err
+	}
+	assign(parsedRules)
+	return nil
+}
+
+func parseRule(rules []string, visited map[string]struct{}, basePath string) ([]string, error) {
+	if visited == nil {
+		visited = make(map[string]struct{})
+	}
+	parsedRules := make([]string, 0, len(rules))
 	for _, s := range rules {
-		if strings.Contains(s, ":") {
-			index := strings.Index(s, ":")
-			var reader io.ReadCloser
-			cmdType := strings.Trim(strings.ToLower(s[0:index]), " ")
-			if cmdType == "include" {
-				target := s[index+1:]
-				if strings.HasPrefix(target, "http") {
-					resp, err := http.Get(target)
-					if err != nil {
-						log.Printf("Read %s fail: %s", target, err)
-						reader = io.NopCloser(bytes.NewReader(nil))
-					} else {
-						reader = resp.Body
-					}
-				} else {
-					var open fs.File
-					var err error
-					if BasePath != "" && !path.IsAbs(target) {
-						open, err = os.DirFS(BasePath).Open(target)
-					} else {
-						open, err = os.Open(target)
-					}
-					if err != nil {
-						log.Printf("Read %s fail: %s", target, err)
-						reader = io.NopCloser(bytes.NewReader(nil))
-					} else {
-						reader = open
-					}
-				}
-				all, _ := io.ReadAll(reader)
-				targetRules := strings.Split(string(all), "\n")
-				nestedParsed := ParseRule(targetRules)
-				for _, s2 := range nestedParsed {
-					parsedRules = append(parsedRules, s2)
-				}
-			} else {
-				log.Printf("unsupported type %s", cmdType)
+		rule := strings.TrimSpace(s)
+		if rule == "" || strings.HasPrefix(rule, "#") {
+			continue
+		}
+
+		cmdType, target, hasCommand := strings.Cut(rule, ":")
+		if !hasCommand {
+			parsedRules = append(parsedRules, rule)
+			continue
+		}
+
+		cmdType = strings.TrimSpace(strings.ToLower(cmdType))
+		if cmdType != "include" {
+			parsedRules = append(parsedRules, rule)
+			continue
+		}
+
+		resolvedTarget, isHTTP, err := resolveIncludeTarget(target, basePath)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := visited[resolvedTarget]; ok {
+			return nil, fmt.Errorf("include cycle detected: %s", resolvedTarget)
+		}
+
+		visited[resolvedTarget] = struct{}{}
+		targetRules, err := readIncludeRules(resolvedTarget, isHTTP)
+		if err != nil {
+			delete(visited, resolvedTarget)
+			return nil, err
+		}
+		nestedParsed, err := parseRule(targetRules, visited, basePath)
+		delete(visited, resolvedTarget)
+		if err != nil {
+			return nil, err
+		}
+		parsedRules = append(parsedRules, nestedParsed...)
+	}
+	return parsedRules, nil
+}
+
+func resolveIncludeTarget(target string, basePath string) (string, bool, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", false, fmt.Errorf("include target is empty")
+	}
+
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		parsedURL, err := url.Parse(target)
+		if err != nil {
+			return "", true, fmt.Errorf("invalid include url %s: %w", target, err)
+		}
+		return parsedURL.String(), true, nil
+	}
+
+	resolvedTarget := target
+	if basePath != "" && !filepath.IsAbs(resolvedTarget) {
+		resolvedTarget = filepath.Join(basePath, resolvedTarget)
+	}
+	absoluteTarget, err := filepath.Abs(resolvedTarget)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve include path %s fail: %w", target, err)
+	}
+	return filepath.Clean(absoluteTarget), false, nil
+}
+
+func readIncludeRules(target string, isHTTP bool) ([]string, error) {
+	var (
+		reader io.ReadCloser
+		err    error
+	)
+
+	if isHTTP {
+		resp, requestErr := includeHTTPClient.Get(target)
+		if requestErr != nil {
+			return nil, fmt.Errorf("request include %s fail: %w", target, requestErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			closeErr := resp.Body.Close()
+			if closeErr != nil {
+				return nil, fmt.Errorf("request include %s fail: status %s and close body: %w", target, resp.Status, closeErr)
 			}
-		} else {
-			parsedRules = append(parsedRules, s)
+			return nil, fmt.Errorf("request include %s fail: status %s", target, resp.Status)
+		}
+		reader = resp.Body
+	} else {
+		reader, err = os.Open(target)
+		if err != nil {
+			return nil, fmt.Errorf("open include %s fail: %w", target, err)
 		}
 	}
-	return parsedRules
+
+	all, err := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read include %s fail: %w", target, err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close include %s fail: %w", target, closeErr)
+	}
+	return strings.Split(string(all), "\n"), nil
 }
 
 func ParseHttpAddr(str string) (*HttpConfig, error) {

@@ -11,7 +11,7 @@ func CreateResolvers(conf *config.SwitchyConfig) ([]DnsResolver, error) {
 	for _, resolverConfig := range conf.Resolvers {
 		resolver, err := createResolver(resolverConfig)
 		if err != nil {
-			return nil, fmt.Errorf("create resolver fail: %v", err)
+			return nil, fmt.Errorf("create resolver fail: %w", err)
 		} else {
 			l = append(l, resolver)
 		}

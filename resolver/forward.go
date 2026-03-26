@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,9 +46,9 @@ func (forward *Forward) Accept(msg *dns.Msg) bool {
 }
 
 func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
-	if forward.stat.alive {
+	if forward.stat.isAlive() {
 		resp, err := forward.Exchange(msg)
-		if forward.stat.checkStatus(err) {
+		if changed, alive := forward.stat.checkStatus(err); changed && !alive {
 			log.Printf("%s is dead, will skip", forward.String())
 		}
 		if err != nil {
@@ -57,12 +58,13 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 		}
 		return resp, err
 	} else {
-		go func() {
-			_, err := forward.Exchange(msg)
-			if forward.stat.checkStatus(err) {
+		probe := msg.Copy()
+		go func(probe *dns.Msg) {
+			_, err := forward.Exchange(probe)
+			if changed, alive := forward.stat.checkStatus(err); changed && alive {
 				log.Printf("%s is alive, will cusome", forward.String())
 			}
-		}()
+		}(probe)
 		if forward.breakOnFail {
 			return nil, BreakError
 		}
@@ -71,12 +73,28 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 }
 
 type ForwardStat struct {
+	mu           sync.Mutex
 	alive        bool
 	failCount    int
 	successCount int
 }
 
-func (stat *ForwardStat) checkStatus(e error) (changed bool) {
+func (stat *ForwardStat) isAlive() bool {
+	stat.mu.Lock()
+	defer stat.mu.Unlock()
+	return stat.alive
+}
+
+func (stat *ForwardStat) snapshot() (alive bool, failCount int, successCount int) {
+	stat.mu.Lock()
+	defer stat.mu.Unlock()
+	return stat.alive, stat.failCount, stat.successCount
+}
+
+func (stat *ForwardStat) checkStatus(e error) (changed bool, alive bool) {
+	stat.mu.Lock()
+	defer stat.mu.Unlock()
+
 	if stat.alive {
 		if e != nil {
 			stat.failCount += 1
@@ -102,7 +120,7 @@ func (stat *ForwardStat) checkStatus(e error) (changed bool) {
 			}
 		}
 	}
-	return
+	return changed, stat.alive
 }
 
 type MultiUpstream []upstream.Upstream
@@ -161,6 +179,10 @@ func (mu MultiUpstream) Address() string {
 
 func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	var err error
+	domainMatcher, err := util.NewDomainMatcher(config.Rule)
+	if err != nil {
+		return nil, fmt.Errorf("init domain matcher fail: %w", err)
+	}
 	upstreams := make([]upstream.Upstream, 0)
 	if config.UpstreamConfig.Url != "" {
 		firstLevel, err := createUpStream(config.UpstreamConfig)
@@ -189,7 +211,7 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	return &Forward{
 		Name:          config.Name,
 		Upstream:      up,
-		DomainMatcher: util.NewDomainMatcher(config.Rule),
+		DomainMatcher: domainMatcher,
 		ttl:           config.TTL,
 		stat:          ForwardStat{alive: true},
 		breakOnFail:   config.BreakOnFail,

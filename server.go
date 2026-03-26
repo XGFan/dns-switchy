@@ -23,11 +23,11 @@ import (
 func ReadConfig(file *string) (*config.SwitchyConfig, error) {
 	log.Printf("Config: %s", *file)
 	open, err := os.Open(*file)
-	//goland:noinspection GoUnhandledErrorResult
-	defer open.Close()
 	if err != nil {
 		return nil, err
 	}
+	//goland:noinspection GoUnhandledErrorResult
+	defer open.Close()
 	config.BasePath = filepath.Dir(open.Name())
 	return config.ParseConfig(open)
 }
@@ -70,14 +70,6 @@ func (s *DnsSwitchyServer) Shutdown() {
 func (s *DnsSwitchyServer) Start() {
 	printRuntimeInfo()
 	log.Printf("Started at %s\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Addr, s.config.Http, s.config.TTL, s.resolvers)
-	go s.StartPlainUDPServer()
-	go s.StartHttpServer()
-	s.wg.Wait()
-}
-
-func (s *DnsSwitchyServer) StartPlainUDPServer() {
-	s.wg.Add(1)
-	defer s.wg.Done()
 	s.udpServer = &dns.Server{
 		Net:       "udp",
 		Addr:      s.config.Addr,
@@ -85,16 +77,23 @@ func (s *DnsSwitchyServer) StartPlainUDPServer() {
 		ReusePort: true,
 		ReuseAddr: true,
 	}
+	s.wg.Add(1)
+	go s.StartPlainUDPServer()
+	if s.config.Http != nil {
+		s.httpServer = &http.Server{Handler: s.httpHandler()}
+		s.wg.Add(1)
+		go s.StartHttpServer()
+	}
+}
+
+func (s *DnsSwitchyServer) StartPlainUDPServer() {
+	defer s.wg.Done()
 	retry(s.udpServer.ListenAndServe)
 }
 
 func (s *DnsSwitchyServer) StartHttpServer() {
-	s.wg.Add(1)
 	defer s.wg.Done()
-	s.httpServer = &http.Server{
-		Handler: s.httpHandler(),
-	}
-	if s.config.Http == nil {
+	if s.httpServer == nil || s.config.Http == nil {
 		return
 	}
 	retry(func() error {
@@ -122,6 +121,12 @@ func (s *DnsSwitchyServer) httpHandler() http.Handler {
 		if queryType == "" {
 			queryType = "A"
 		}
+		queryTypeValue, ok := dns.StringToType[strings.ToUpper(queryType)]
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("Invalid type"))
+			return
+		}
 		question := r.URL.Query().Get("question")
 		if question == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -129,42 +134,48 @@ func (s *DnsSwitchyServer) httpHandler() http.Handler {
 			return
 		}
 		m := new(dns.Msg)
-		m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: dns.StringToType[queryType], Qclass: dns.ClassINET})
+		m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: queryTypeValue, Qclass: dns.ClassINET})
 		s.dnsMsgHandler(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
 	})
 }
 
 func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg) {
 	if checkAndUnify(msg) != nil {
-		log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
+		if msg == nil {
+			log.Printf("[%s] send invalid nil msg", resultWriter.RemoteAddr())
+		} else {
+			log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
+		}
+		resultWriter.Rcode(dns.RcodeFormatError)
+		return
 	}
 	if cached := s.dnsCache.Get(msg.Question[0]); !reflect.DeepEqual(cached, util.None) {
 		resultWriter.Success("dnsCache", &cached)
 		return
-	} else {
-		for i, upstream := range s.resolvers {
-			if upstream.Accept(msg) {
-				resp, err := upstream.Resolve(msg)
-				if err != nil {
-					if errors.Is(err, resolver.BreakError) {
-						resultWriter.Fail(upstream, err)
-						return
-					}
-					if i < len(s.resolvers)-1 {
-						continue
-					} else {
-						resultWriter.Fail(upstream, err)
-					}
-				} else {
-					if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) > 0 {
-						s.dnsCache.Set(msg.Question[0], *resp, upstream.TTL())
-					}
-					resultWriter.Success(upstream, resp)
+	}
+	for i, upstream := range s.resolvers {
+		if upstream.Accept(msg) {
+			resp, err := upstream.Resolve(msg)
+			if err != nil {
+				if errors.Is(err, resolver.BreakError) {
+					resultWriter.Fail(upstream, err)
+					return
 				}
-				return
+				if i < len(s.resolvers)-1 {
+					continue
+				} else {
+					resultWriter.Fail(upstream, err)
+				}
+			} else {
+				if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) > 0 {
+					s.dnsCache.Set(msg.Question[0], *resp, upstream.TTL())
+				}
+				resultWriter.Success(upstream, resp)
 			}
+			return
 		}
 	}
+	resultWriter.Rcode(dns.RcodeRefused)
 }
 
 func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
@@ -209,6 +220,7 @@ type ResultWriter interface {
 	RemoteAddr() net.Addr
 	Success(name interface{}, resp *dns.Msg)
 	Fail(name interface{}, err error)
+	Rcode(rcode int)
 }
 
 type DnsWriter struct {
@@ -254,6 +266,16 @@ func (a *HttpWriter) Fail(name interface{}, err error) {
 	})
 }
 
+func (a *HttpWriter) Rcode(rcode int) {
+	resp := new(dns.Msg)
+	if a.msg != nil {
+		resp.SetRcode(a.msg, rcode)
+	} else {
+		resp.Rcode = rcode
+	}
+	a.Success("policy", resp)
+}
+
 func (w *DnsWriter) RemoteAddr() net.Addr {
 	return w.writer.RemoteAddr()
 }
@@ -270,14 +292,22 @@ func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 		AnswerSize: len(resp.Answer),
 	}
 	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
-	resp.Id = w.msg.Id
-	resp.Opcode = w.msg.Opcode
-	if resp.Opcode == dns.OpcodeQuery {
-		resp.RecursionDesired = w.msg.RecursionDesired // Copy rd bit
-		resp.CheckingDisabled = w.msg.CheckingDisabled // Copy cd bit
+	writeResp := resp.Copy()
+	writeResp.Id = w.msg.Id
+	writeResp.Opcode = w.msg.Opcode
+	if writeResp.Opcode == dns.OpcodeQuery {
+		writeResp.RecursionDesired = w.msg.RecursionDesired // Copy rd bit
+		writeResp.CheckingDisabled = w.msg.CheckingDisabled // Copy cd bit
 	}
-	resp.Truncate(512)
-	_ = w.writer.WriteMsg(resp)
+	writeResp.Truncate(w.udpSize())
+	_ = w.writer.WriteMsg(writeResp)
+}
+
+func (w *DnsWriter) udpSize() int {
+	if opt := w.msg.IsEdns0(); opt != nil && opt.UDPSize() > 0 {
+		return int(opt.UDPSize())
+	}
+	return 512
 }
 
 func (w *DnsWriter) Fail(name interface{}, err error) {
@@ -296,12 +326,24 @@ func (w *DnsWriter) Fail(name interface{}, err error) {
 	_ = w.writer.WriteMsg(resp)
 }
 
-func checkAndUnify(msg *dns.Msg) error {
-	if len(msg.Question) != 1 {
-		return errors.New(fmt.Sprintf("invalid question %v", msg.Question))
+func (w *DnsWriter) Rcode(rcode int) {
+	resp := new(dns.Msg)
+	if w.msg != nil {
+		resp.SetRcode(w.msg, rcode)
+	} else {
+		resp.Rcode = rcode
 	}
-	question := msg.Question[0]
-	question.Name = strings.ToLower(question.Name)
+	_ = w.writer.WriteMsg(resp)
+}
+
+func checkAndUnify(msg *dns.Msg) error {
+	if msg == nil {
+		return errors.New("invalid nil msg")
+	}
+	if len(msg.Question) != 1 {
+		return fmt.Errorf("invalid question %v", msg.Question)
+	}
+	msg.Question[0].Name = strings.ToLower(dns.Fqdn(msg.Question[0].Name))
 	return nil
 }
 

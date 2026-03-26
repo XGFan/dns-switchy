@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"dns-switchy/config"
+	"fmt"
 	"github.com/miekg/dns"
 	"log"
 	"sync"
@@ -10,8 +11,11 @@ import (
 
 type Preloader struct {
 	*Forward
-	dnsCache sync.Map
-	ticker   *time.Ticker
+	dnsCache  sync.Map
+	ticker    *time.Ticker
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func (pl *Preloader) TTL() time.Duration {
@@ -19,13 +23,30 @@ func (pl *Preloader) TTL() time.Duration {
 }
 
 func (pl *Preloader) Close() {
-	pl.ticker.Stop()
-	pl.Forward.Close()
+	pl.closeOnce.Do(func() {
+		if pl.ticker != nil {
+			pl.ticker.Stop()
+		}
+		if pl.stop != nil {
+			close(pl.stop)
+		}
+		if pl.done != nil {
+			<-pl.done
+		}
+		if pl.Forward != nil {
+			pl.Forward.Close()
+		}
+	})
 }
 
 func (pl *Preloader) Work() {
+	defer close(pl.done)
 	for {
-		for range pl.ticker.C {
+		select {
+		case <-pl.stop:
+			log.Printf("preloader %s exit", pl)
+			return
+		case <-pl.ticker.C:
 			pl.dnsCache.Range(func(key, value interface{}) bool {
 				v := value.(TimeItem)
 				if v.ExpiredAt.After(time.Now()) {
@@ -40,7 +61,6 @@ func (pl *Preloader) Work() {
 				return true
 			})
 		}
-		log.Printf("preloader %s exit", pl)
 	}
 }
 
@@ -54,7 +74,7 @@ func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
 	if err == nil && len(resolve.Answer) > 0 {
 		pl.dnsCache.Store(
 			msg.Question[0],
-			TimeItem{time.Now().Add(pl.ttl), resolve},
+			TimeItem{time.Now().Add(pl.ttl), resolve.Copy()},
 		)
 	}
 	return resolve, err
@@ -62,13 +82,16 @@ func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
 
 func (pl *Preloader) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	if cached, exist := pl.dnsCache.Load(msg.Question[0]); exist {
-		return cached.(TimeItem).Item, nil
+		return cached.(TimeItem).Item.Copy(), nil
 	} else {
 		return pl.PreLoad(msg)
 	}
 }
 
 func NewPreloader(pc *config.PreloaderConfig) (*Preloader, error) {
+	if pc.TTL <= 0 {
+		return nil, fmt.Errorf("invalid preloader ttl: %s", pc.TTL)
+	}
 	forward, err := NewForward(&pc.ForwardConfig)
 	if err != nil {
 		log.Println("init preloader fail")
@@ -78,6 +101,8 @@ func NewPreloader(pc *config.PreloaderConfig) (*Preloader, error) {
 		Forward:  forward,
 		dnsCache: sync.Map{},
 		ticker:   time.NewTicker(pc.TTL),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	go p.Work()
 	return p, nil
