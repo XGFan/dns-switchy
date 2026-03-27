@@ -1,8 +1,11 @@
 package main
 
 import (
+	"dns-switchy/config"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,5 +72,44 @@ func TestWatchConfigFileCloseWaitsForWorkerExit(t *testing.T) {
 		}()
 
 		waitForMainTest(t, stopDone, "watchConfigFile stop blocked")
+	}
+}
+
+func TestReloadServerPreservesPreviousServerOnCreateFailure(t *testing.T) {
+	oldAddr := reserveUDPAddr(t)
+
+	runningServer, err := reloadServer(nil, &config.SwitchyConfig{Addr: oldAddr})
+	if err != nil {
+		t.Fatalf("initial reloadServer fail: %v", err)
+	}
+	t.Cleanup(func() {
+		if runningServer != nil {
+			runningServer.Shutdown()
+		}
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	previousServer := runningServer
+
+	runningServer, err = reloadServer(runningServer, &config.SwitchyConfig{
+		Addr: reserveUDPAddr(t),
+		Resolvers: []config.ResolverConfig{
+			&config.ForwardConfig{Name: "broken-forward"},
+		},
+	})
+	if err == nil {
+		t.Fatal("reloadServer error = nil, want Create failure")
+	}
+	if !strings.Contains(err.Error(), "create resolver fail") {
+		t.Fatalf("reloadServer error = %v, want create failure", err)
+	}
+	if runningServer != previousServer {
+		t.Fatalf("returned server = %p, want previous server %p", runningServer, previousServer)
+	}
+
+	listener, listenErr := net.ListenPacket("udp", oldAddr)
+	if listenErr == nil {
+		_ = listener.Close()
+		t.Fatalf("expected previous UDP listener to remain bound on %s after failed reload", oldAddr)
 	}
 }
