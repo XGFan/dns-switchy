@@ -24,7 +24,7 @@ var v2flyCacheTTL = 24 * time.Hour
 func v2flyCacheDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("get user home dir: %w", err)
+		home = os.TempDir()
 	}
 	dir := filepath.Join(home, ".dns-switchy", "cache")
 	if err := os.MkdirAll(dir, 0755); err != nil {
