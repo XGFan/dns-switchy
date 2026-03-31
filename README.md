@@ -1,62 +1,55 @@
-## DNS-Switchy
+# DNS-Switchy
 
-### 配置
+基于规则的 DNS 代理，按域名将请求路由到不同的上游解析器。支持 UDP DNS、DoH、DoT，内置缓存和热重载。
 
-```yaml
-port: 1053 #监听端口，目前只支持UDP
-ttl: 5m #全局缓存时间
-resolvers:
-  - type: filter #过滤器 ，只针对类型
-    queryType:
-      - TXT
-  - type: filter #过滤器 ，只针对域名，和forward规则一致
-    rule:
-      - ad.google.com
-  - type: filter #过滤器 ，域名和类型，AND的关系
-    queryType:
-      - A
-    rule:
-      - wechat.com
-  - type: file #文件解析
-    fileType: lease #dnsmasq租约文件
-    location: /tmp/dhcp.leases
-    refreshInterval: 10m #刷新时间
-    extraConfig:
-      domain: lan #dhcp的search domain
-  - type: file #host文件
-    fileType: host
-    location: system #可以是路径，如果是system，就按照系统的hosts文件来读取
-    refreshInterval: 10m
-    extraContent: |
-      #语法和host一致
-      1.1.1.1 a.com b.com
-      2.2.2.2 c.com
-      ::1 d.com
-  - name: cn-dns
-    type: forward
-    ttl: 600s #缓存时间10分钟
-    url: 114.114.114.114 #udp可以省略端口
-    rule: #规则都是按域来的，a.com就覆盖了1.a.com，当规则存在时，只用该resolver处理符合规则的请求
-      - cn
-      - qq.com
-      - baidu.com
-      - include:v2-rule.txt #支持读取额外的文件
-  - name: cf-dns
-    type: forward
-    # 不设置缓存时间，采用全局ttl，实际就是5分钟
-    # ttl: 600s
-    url: https://cloudflare-dns.com/dns-query #doh
-    config:
-      timeout: 3s #超时时间
-      serverIP:
-        - 104.16.249.249 #可选的，方便bootstrap
-  - name: final-dns
-    type: forward
-    ttl: -1s #由于返回可能被污染，所以不缓存（只有cf-dns无法解析，才会落到这里
-    url: 114.114.114.114
+## 功能
 
+- **Resolver 链**：按顺序匹配，第一个命中的 resolver 处理请求
+- **域名规则**：后缀匹配、精确匹配、关键字、正则表达式，支持黑名单
+- **多种上游协议**：UDP、DNS-over-HTTPS (DoH)、DNS-over-TLS (DoT)、DNSCrypt
+- **v2fly 域名列表**：原生集成 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)，自动下载缓存
+- **本地解析**：hosts 文件、dnsmasq 租约文件
+- **全局缓存**：按 resolver 或全局 TTL 缓存响应
+- **热重载**：修改配置文件后自动重载，无需重启
+- **HTTP API**：可选的 HTTP 查询接口
+
+## 快速开始
+
+```bash
+go build -o dns-switchy
+./dns-switchy -c config.yaml
 ```
 
-#### 处理流程
+命令行参数：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-c` | `config.yaml` | 配置文件路径 |
+| `-x` | `false` | 日志中显示时间戳 |
+
+程序启动后在配置的 UDP 端口监听 DNS 请求。修改配置文件会自动触发热重载。
+
+## 处理流程
 
 ![流程图](flow.png)
+
+## 配置概览
+
+```yaml
+addr: ":1053"
+ttl: 5m
+http: ":8080"          # 可选，HTTP API
+resolvers:
+  - type: forward
+    name: cn-dns
+    ttl: 600s
+    url: 114.114.114.114
+    rule:
+      - cn
+      - v2fly:cn
+  - type: forward
+    name: cf-dns
+    url: https://cloudflare-dns.com/dns-query
+```
+
+完整的配置参考和所有 resolver 类型详见 [USAGE.md](USAGE.md)。

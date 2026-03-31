@@ -145,6 +145,43 @@ func TestParseHttpAddr(t *testing.T) {
   `README.md`.
 - Hot reload behavior lives in the server path, so watch changes there closely.
 
+### Rule prefixes in config
+
+Rules are expanded at config parse time by `parseRule()` in `config/config.go`.
+
+- Bare domain (`qq.com`) — suffix match via `DomainSet` tree.
+- `!` prefix — blacklist entry. Works with all match types.
+- `include:<path-or-url>` — load external rule file, recursive with cycle
+  detection.
+- `v2fly:<listname>` — download from v2fly/domain-list-community, parse
+  `domain:` as suffix match, pass through `full:`, `keyword:`, `regexp:`
+  with prefix preserved, skip `include:` and unknown prefixes.
+
+### Domain matcher types
+
+`NewDomainMatcher()` in `util/matcher.go` builds a `ComplexDomainSet` from
+the expanded rule list. It supports:
+
+- Bare domains — suffix match via `DomainSet` (hierarchical tree).
+- `full:<domain>` — exact match only, no subdomain matching.
+- `keyword:<text>` — substring match against the query domain.
+- `regexp:<pattern>` — Go `regexp` match against the query domain.
+- `!` prefix — blacklist. Works with all of the above.
+
+Match priority in `MatchDomain()`: blacklist → suffix tree → full → keyword
+→ regexp. If only blacklist entries exist, everything not blacklisted matches.
+
+### v2fly cache
+
+`fetchV2flyList()` in `config/config.go` implements a file-based cache:
+
+- Cache directory: `~/.dns-switchy/cache/`
+- Cache file: `v2fly-<listname>.txt`
+- TTL: 24 hours (based on file mtime)
+- Stale cache used as fallback when download fails.
+- Missing cache + download failure logs a warning and returns empty (never
+  blocks startup).
+
 ## What to do before handoff
 
 - Run `go fmt ./...` on any changed Go file.
