@@ -95,3 +95,121 @@ func TestNewQueryTypeMatcherInvalidQueryType(t *testing.T) {
 		t.Fatalf("NewQueryTypeMatcher() error = %v, want unknown query type", err)
 	}
 }
+
+func TestDomainMatcherFullMatch(t *testing.T) {
+	matcher, err := NewDomainMatcher([]string{"full:example.com"})
+	if err != nil {
+		t.Fatalf("NewDomainMatcher() error = %v", err)
+	}
+	tests := []struct {
+		domain string
+		want   bool
+	}{
+		{"example.com", true},
+		{"EXAMPLE.COM", true},
+		{"sub.example.com", false},
+		{"notexample.com", false},
+		{"example.com.cn", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain, func(t *testing.T) {
+			if got := matcher.MatchDomain(tt.domain); got != tt.want {
+				t.Fatalf("MatchDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDomainMatcherKeyword(t *testing.T) {
+	matcher, err := NewDomainMatcher([]string{"keyword:google"})
+	if err != nil {
+		t.Fatalf("NewDomainMatcher() error = %v", err)
+	}
+	tests := []struct {
+		domain string
+		want   bool
+	}{
+		{"google.com", true},
+		{"www.google.com", true},
+		{"mail.google.co.jp", true},
+		{"ungoogle.me", true},
+		{"example.com", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain, func(t *testing.T) {
+			if got := matcher.MatchDomain(tt.domain); got != tt.want {
+				t.Fatalf("MatchDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDomainMatcherRegexp(t *testing.T) {
+	matcher, err := NewDomainMatcher([]string{`regexp:^.+-mihayo\.akamaized\.net$`})
+	if err != nil {
+		t.Fatalf("NewDomainMatcher() error = %v", err)
+	}
+	tests := []struct {
+		domain string
+		want   bool
+	}{
+		{"cdn-mihayo.akamaized.net", true},
+		{"ab-mihayo.akamaized.net", true},
+		{"mihayo.akamaized.net", false},
+		{"other.example.com", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain, func(t *testing.T) {
+			if got := matcher.MatchDomain(tt.domain); got != tt.want {
+				t.Fatalf("MatchDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDomainMatcherRegexpInvalid(t *testing.T) {
+	_, err := NewDomainMatcher([]string{`regexp:[invalid`})
+	if err == nil {
+		t.Fatal("NewDomainMatcher() error = nil, want regexp compile error")
+	}
+	if !strings.Contains(err.Error(), "invalid regexp rule") {
+		t.Fatalf("NewDomainMatcher() error = %v, want 'invalid regexp rule'", err)
+	}
+}
+
+func TestDomainMatcherMixedTypes(t *testing.T) {
+	matcher, err := NewDomainMatcher([]string{
+		"example.com",
+		"full:exact.org",
+		"keyword:tracker",
+		`regexp:^ad\d+\.`,
+		"!blocked.example.com",
+	})
+	if err != nil {
+		t.Fatalf("NewDomainMatcher() error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		domain string
+		want   bool
+	}{
+		{"suffix match", "sub.example.com", true},
+		{"suffix exact", "example.com", true},
+		{"full exact", "exact.org", true},
+		{"full rejects subdomain", "sub.exact.org", false},
+		{"keyword hit", "ad-tracker.io", true},
+		{"keyword miss", "example.net", false},
+		{"regexp hit", "ad123.cdn.com", true},
+		{"regexp miss", "notad.cdn.com", false},
+		{"blacklist blocks suffix", "blocked.example.com", false},
+		{"blacklist blocks sub-sub", "api.blocked.example.com", false},
+		{"unmatched domain", "random.net", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matcher.MatchDomain(tt.domain); got != tt.want {
+				t.Fatalf("MatchDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}

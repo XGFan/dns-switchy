@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +18,53 @@ import (
 var BasePath string
 
 var includeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+var v2flyCacheTTL = 24 * time.Hour
+
+func v2flyCacheDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get user home dir: %w", err)
+	}
+	dir := filepath.Join(home, ".dns-switchy", "cache")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create cache dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+func v2flyCachePath(listName string) (string, error) {
+	dir, err := v2flyCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fmt.Sprintf("v2fly-%s.txt", listName)), nil
+}
+
+func readV2flyCache(listName string) (lines []string, fresh bool, err error) {
+	path, err := v2flyCachePath(listName)
+	if err != nil {
+		return nil, false, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, false, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	isFresh := time.Since(info.ModTime()) < v2flyCacheTTL
+	return strings.Split(string(data), "\n"), isFresh, nil
+}
+
+func writeV2flyCache(listName string, lines []string) error {
+	path, err := v2flyCachePath(listName)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+}
 
 type SwitchyConfig struct {
 	Addr      string
@@ -284,31 +332,44 @@ func parseRule(rules []string, visited map[string]struct{}, basePath string) ([]
 		}
 
 		cmdType = strings.TrimSpace(strings.ToLower(cmdType))
-		if cmdType != "include" {
-			parsedRules = append(parsedRules, rule)
-			continue
-		}
 
-		resolvedTarget, isHTTP, err := resolveIncludeTarget(target, basePath)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := visited[resolvedTarget]; ok {
-			return nil, fmt.Errorf("include cycle detected: %s", resolvedTarget)
-		}
+		switch cmdType {
+		case "include":
+			resolvedTarget, isHTTP, err := resolveIncludeTarget(target, basePath)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := visited[resolvedTarget]; ok {
+				return nil, fmt.Errorf("include cycle detected: %s", resolvedTarget)
+			}
 
-		visited[resolvedTarget] = struct{}{}
-		targetRules, err := readIncludeRules(resolvedTarget, isHTTP)
-		if err != nil {
+			visited[resolvedTarget] = struct{}{}
+			targetRules, err := readIncludeRules(resolvedTarget, isHTTP)
+			if err != nil {
+				delete(visited, resolvedTarget)
+				return nil, err
+			}
+			nestedParsed, err := parseRule(targetRules, visited, basePath)
 			delete(visited, resolvedTarget)
-			return nil, err
+			if err != nil {
+				return nil, err
+			}
+			parsedRules = append(parsedRules, nestedParsed...)
+
+		case "v2fly":
+			listName := strings.TrimSpace(target)
+			if listName == "" {
+				return nil, fmt.Errorf("v2fly list name is empty")
+			}
+			lines, err := fetchV2flyList(listName)
+			if err != nil {
+				return nil, err
+			}
+			parsedRules = append(parsedRules, parseV2flyRules(lines)...)
+
+		default:
+			parsedRules = append(parsedRules, rule)
 		}
-		nestedParsed, err := parseRule(targetRules, visited, basePath)
-		delete(visited, resolvedTarget)
-		if err != nil {
-			return nil, err
-		}
-		parsedRules = append(parsedRules, nestedParsed...)
 	}
 	return parsedRules, nil
 }
@@ -373,6 +434,72 @@ func readIncludeRules(target string, isHTTP bool) ([]string, error) {
 		return nil, fmt.Errorf("close include %s fail: %w", target, closeErr)
 	}
 	return strings.Split(string(all), "\n"), nil
+}
+
+func fetchV2flyList(listName string) ([]string, error) {
+	cached, fresh, cacheErr := readV2flyCache(listName)
+	if cacheErr == nil && fresh {
+		log.Printf("v2fly %s: using cached rules", listName)
+		return cached, nil
+	}
+
+	v2flyURL := fmt.Sprintf("https://raw.githubusercontent.com/v2fly/domain-list-community/release/%s.txt", listName)
+	lines, dlErr := readIncludeRules(v2flyURL, true)
+	if dlErr == nil {
+		if writeErr := writeV2flyCache(listName, lines); writeErr != nil {
+			log.Printf("v2fly %s: cache write failed: %v", listName, writeErr)
+		}
+		return lines, nil
+	}
+
+	if cacheErr == nil {
+		log.Printf("v2fly %s: download failed (%v), using stale cache", listName, dlErr)
+		return cached, nil
+	}
+
+	log.Printf("v2fly %s: download failed (%v) and no cache available", listName, dlErr)
+	return nil, nil
+}
+
+func parseV2flyRules(lines []string) []string {
+	rules := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		prefix, value, hasPrefix := strings.Cut(line, ":")
+		if !hasPrefix {
+			rules = append(rules, stripV2flyAttrs(line))
+			continue
+		}
+
+		prefix = strings.TrimSpace(strings.ToLower(prefix))
+		value = stripV2flyAttrs(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+
+		switch prefix {
+		case "domain":
+			rules = append(rules, value)
+		case "full", "keyword", "regexp":
+			rules = append(rules, prefix+":"+value)
+		default:
+			continue
+		}
+	}
+	return rules
+}
+
+// stripV2flyAttrs removes @attribute tags from a v2fly domain value.
+// e.g. "a.alimama.cn:@ads" → "a.alimama.cn"
+func stripV2flyAttrs(s string) string {
+	if idx := strings.Index(s, ":@"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
 
 func ParseHttpAddr(str string) (*HttpConfig, error) {

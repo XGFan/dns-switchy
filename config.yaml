@@ -35,7 +35,7 @@ resolvers:
       - cn
       - qq.com
       - baidu.com
-      - include:v2-rule.txt #支持读取额外的文件
+      - v2fly:cn #v2fly domain-list-community cn 列表
   - name: cf-dns
     type: forward
     # 不设置缓存时间，采用全局ttl，实际就是5分钟

@@ -3,9 +3,11 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"dns-switchy/config"
+
 	"github.com/miekg/dns"
 )
 
@@ -52,14 +54,34 @@ func (q QueryTypeSet) String() string {
 type ComplexDomainSet struct {
 	WhiteList DomainSet
 	BlackList DomainSet
+	FullMatch map[string]bool
+	Keywords  []string
+	Regexps   []*regexp.Regexp
 }
 
 func (c *ComplexDomainSet) MatchDomain(domain string) bool {
 	domain = normalizeDomain(domain)
-	if len(c.WhiteList) == 0 {
-		return !c.BlackList.MatchDomain(domain)
+	if c.BlackList.MatchDomain(domain) {
+		return false
 	}
-	return (!c.BlackList.MatchDomain(domain)) && c.WhiteList.MatchDomain(domain)
+	if c.WhiteList.MatchDomain(domain) {
+		return true
+	}
+	if c.FullMatch[domain] {
+		return true
+	}
+	for _, kw := range c.Keywords {
+		if strings.Contains(domain, kw) {
+			return true
+		}
+	}
+	for _, re := range c.Regexps {
+		if re.MatchString(domain) {
+			return true
+		}
+	}
+	// No whitelist rules at all means accept everything (except blacklist).
+	return len(c.WhiteList) == 0 && len(c.FullMatch) == 0 && len(c.Keywords) == 0 && len(c.Regexps) == 0
 }
 
 func (c *ComplexDomainSet) String() string {
@@ -165,30 +187,63 @@ func NewDomainMatcher(rules []string) (DomainMatcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(domains) > 0 {
-		c := new(ComplexDomainSet)
-		c.BlackList = make(DomainSet)
-		c.WhiteList = make(DomainSet)
-		added := false
-		for _, domain := range domains {
-			trimmed := strings.TrimSpace(domain)
-			if trimmed == "" {
-				continue
+	if len(domains) == 0 {
+		return AcceptAll, nil
+	}
+	c := &ComplexDomainSet{
+		BlackList: make(DomainSet),
+		WhiteList: make(DomainSet),
+		FullMatch: make(map[string]bool),
+	}
+	added := false
+	for _, domain := range domains {
+		trimmed := strings.TrimSpace(domain)
+		if trimmed == "" {
+			continue
+		}
+		blacklist := false
+		if strings.HasPrefix(trimmed, "!") {
+			blacklist = true
+			trimmed = strings.TrimSpace(trimmed[1:])
+		}
+		prefix, value, hasPrefix := strings.Cut(trimmed, ":")
+		if hasPrefix {
+			value = strings.TrimSpace(value)
+			switch strings.ToLower(strings.TrimSpace(prefix)) {
+			case "full":
+				if blacklist {
+					c.BlackList.addDomain(value)
+				} else {
+					c.FullMatch[normalizeDomain(value)] = true
+				}
+			case "keyword":
+				c.Keywords = append(c.Keywords, normalizeDomain(value))
+			case "regexp":
+				re, compileErr := regexp.Compile(value)
+				if compileErr != nil {
+					return nil, fmt.Errorf("invalid regexp rule %q: %w", value, compileErr)
+				}
+				c.Regexps = append(c.Regexps, re)
+			default:
+				if blacklist {
+					c.BlackList.addDomain(trimmed)
+				} else {
+					c.WhiteList.addDomain(trimmed)
+				}
 			}
-			if strings.HasPrefix(trimmed, "!") {
-				c.BlackList.addDomain(strings.TrimSpace(strings.TrimPrefix(trimmed, "!")))
+		} else {
+			if blacklist {
+				c.BlackList.addDomain(trimmed)
 			} else {
 				c.WhiteList.addDomain(trimmed)
 			}
-			added = true
 		}
-		if added {
-			return c, nil
-		}
-		return AcceptAll, nil
-	} else {
+		added = true
+	}
+	if !added {
 		return AcceptAll, nil
 	}
+	return c, nil
 }
 
 func NewQueryTypeMatcher(queryTypes []string) (QueryTypeMatcher, error) {

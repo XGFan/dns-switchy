@@ -1,139 +1,120 @@
-# AGENTS.md - DNS-Switchy Project Guidelines
+# AGENTS.md - DNS-Switchy agent guide
 
-## Project Overview
+## Purpose
 
-DNS-Switchy is a DNS proxy server written in Go. It routes DNS queries through configurable resolvers (forward, filter, file-based, mock) with domain-based rules and caching support.
+Use this file as the working guide for autonomous coding agents in DNS-Switchy.
+Keep changes narrow, verify them, and prefer repo conventions over new patterns.
 
-**Tech Stack:** Go 1.24+, github.com/miekg/dns, github.com/AdguardTeam/dnsproxy
+DNS-Switchy is a Go DNS proxy server with resolver chaining, domain rules,
+and caching. Current repo targets Go 1.26.1, matching `go.mod` and CI.
 
----
+## What to read first
 
-## Build & Test Commands
+- `README.md` for the user-facing config shape and resolver examples.
+- `.drone.yml` for CI build settings and target platform.
+- `go.mod` for the active Go version and dependency set.
+- The package you are editing, plus its tests.
 
-### Build
+## Working rules
+
+- Stay within the requested task. Do not widen scope.
+- Prefer existing package patterns before adding new abstractions.
+- If code changes, run formatting, vetting, and tests before finishing.
+
+## Build, format, lint, test
+
 ```bash
-go build              # Build binary (outputs to ./dns-switchy)
-go build -o <name>    # Build with custom name
+go build
+go build -o dns-switchy
+go fmt ./...
+go vet ./...
+go test ./...
+go test ./config
+go test -run TestName ./...
+go test -run TestParseHttpAddr ./config
+go test -run TestConfig ./config
 ```
 
-### Test
+Notes:
+
+- `go build` writes the default binary as `./dns-switchy`.
+- `go test -run` filters by test name. Use the exact test name from the file.
+- For subtests, keep the parent test name and inspect the `t.Run` cases.
+
+## Single test examples
+
 ```bash
-go test ./...                      # Run all tests
-go test -v ./...                   # Verbose output
-go test ./config                   # Test specific package
-go test -run TestName ./...        # Run specific test by name
-go test -run Test_parse ./config   # Run specific test in package
+go test -run TestParseHttpAddr ./config
+go test -run TestForward_Resolve ./resolver
 ```
 
-### Lint & Format
-```bash
-go fmt ./...           # Format all code
-go vet ./...           # Static analysis
-```
+Replace the test names with real names from the package you are touching.
 
-### Run
-```bash
-./dns-switchy -c config.yaml     # Run with config file
-./dns-switchy -c config.yaml -x  # Run with timestamps in logs
-```
-
----
-
-## Code Style Guidelines
+## Code style, grounded in this repo
 
 ### Imports
-Group imports in this order with blank lines between:
-1. Standard library
-2. External packages (third-party)
-3. Local packages (dns-switchy/*)
 
-```go
-import (
-    "context"
-    "errors"
-    "fmt"
-    
-    "github.com/miekg/dns"
-    "gopkg.in/yaml.v3"
-    
-    "dns-switchy/config"
-    "dns-switchy/util"
-)
-```
+- Group imports in this order, with blank lines between groups.
+  1. Standard library
+  2. Third-party packages
+  3. Local `dns-switchy/*` packages
+- Let `gofmt` keep the import block tidy.
 
-### Naming Conventions
+### Formatting
 
-- **Packages:** lowercase, single word (`config`, `resolver`, `util`)
-- **Types:** PascalCase for exported, camelCase for unexported
-- **Interfaces:** PascalCase, noun or verb (`DnsResolver`, `DomainMatcher`, `Cache`)
-- **Constants:** PascalCase for exported, camelCase for unexported
-- **Errors:** Use `var ErrName = errors.New("message")` for sentinel errors
+- Use `gofmt` for all Go files.
+- Keep line wrapping and alignment to the formatter, not manual spacing.
+- Prefer simple expressions over dense one-liners.
 
-```go
-// Good
-var BreakError = errors.New("stop on fail")
+### Naming
 
-type DnsResolver interface { ... }
-type ForwardConfig struct { ... }
-```
+- Packages stay lowercase and single word, like `config`, `resolver`, `util`.
+- Exported types and funcs use PascalCase.
+- Unexported names use camelCase.
+- Test names follow `TestName` or `TestType_Method`.
 
-### Struct Definitions
+### Structs and composition
 
-- Group related fields
-- Embed interfaces/structs at the top
-- Use yaml tags for config structs
-
-```go
-type Forward struct {
-    Name string
-    upstream.Upstream           // Embedded interface
-    util.DomainMatcher          // Embedded interface
-    ttl         time.Duration
-    stat        ForwardStat
-    breakOnFail bool
-}
-
-type ForwardConfig struct {
-    Name        string        `yaml:"name,omitempty"`
-    TTL         time.Duration `yaml:"ttl,omitempty"`
-    BreakOnFail bool          `yaml:"break-on-fail,omitempty"`
-}
-```
-
-### Error Handling
-
-- Wrap errors with context using `fmt.Errorf`:
-  ```go
-  return nil, fmt.Errorf("create resolver fail: %w", err)
-  ```
-- Log errors with context using `log.Printf`:
-  ```go
-  log.Printf("Read %s fail: %s", target, err)
-  ```
-- Use `log.Fatalln(err)` for fatal startup errors
-- Ignore errors explicitly with `_` when intentional:
-  ```go
-  defer open.Close()  // noinspection GoUnhandledErrorResult
-  ```
+- Group related fields together.
+- Put embedded interfaces and structs near the top of the struct.
+- Use composition and embedding, not deep inheritance-like layers.
+- Config structs should use YAML tags, including `yaml:",inline"` where needed.
 
 ### Interfaces
 
-Define small, focused interfaces in the package that uses them:
+- Keep interfaces small and focused.
+- Define them in the package that uses them.
+- Match the repo pattern of narrow contracts like resolver and matcher helpers.
 
-```go
-// resolver/dns.go
-type DnsResolver interface {
-    Close()
-    Accept(msg *dns.Msg) bool
-    Resolve(msg *dns.Msg) (*dns.Msg, error)
-    TTL() time.Duration
-}
-```
+### Errors
 
-### Testing
+- Wrap errors with context using `fmt.Errorf("...: %w", err)`.
+- Keep error messages specific to the failing operation.
+- Use sentinel errors only when a package truly needs them.
 
-- Place tests in the same package (not `_test` suffix)
-- Use table-driven tests for multiple cases:
+### Logging
+
+- Use `log.Printf` for contextual logs.
+- Use `log.Fatalln` for fatal startup failures.
+- When structured output is needed, encode it through `log.Writer()`.
+- Keep log text short and informative.
+
+### Configuration parsing
+
+- Follow the repo pattern of parsing into an internal raw struct first.
+- Convert raw config into exported config types after validation.
+- Use YAML tags rather than custom parsing unless the format needs it.
+
+## Testing style
+
+- Keep tests in the same package as the code they cover.
+- Prefer table-driven tests for multiple cases.
+- Use `t.Run` for each case.
+- Keep assertions tight and local to the case.
+- Name tests after behavior, not implementation details.
+
+Example shape:
+
 ```go
 func TestParseHttpAddr(t *testing.T) {
     tests := []struct {
@@ -141,102 +122,43 @@ func TestParseHttpAddr(t *testing.T) {
         args    string
         wantErr bool
     }{
-        {name: "ip:port", args: "127.0.0.1:8888", wantErr: false},
-        {name: "only port", args: ":8888", wantErr: false},
+        {name: "ip:port", args: "127.0.0.1:8888"},
+        {name: "only port", args: ":8888"},
     }
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             _, err := ParseHttpAddr(tt.args)
             if (err != nil) != tt.wantErr {
-                t.Errorf("ParseHttpAddr() error = %v, wantErr %v", err, tt.wantErr)
+                t.Fatalf("ParseHttpAddr() error = %v, wantErr %v", err, tt.wantErr)
             }
         })
     }
 }
 ```
 
-- Test naming: `Test_functionName` or `TestTypeName_MethodName`
+## Resolver and config patterns
 
-### Logging
+- Resolver order matters. First matching resolver wins.
+- Domain rules are hierarchical, so parent domains cover subdomains.
+- Config can include external rule files with the `include:` style shown in
+  `README.md`.
+- Hot reload behavior lives in the server path, so watch changes there closely.
 
-- Use `log.Printf` for structured logging with context
-- JSON-encoded structured logs for query responses:
-```go
-_ = json.NewEncoder(log.Writer()).Encode(structureLog)
-```
-- Log format: `log.Printf("%s is dead, will skip", forward.String())`
+## What to do before handoff
 
-### Configuration Parsing
+- Run `go fmt ./...` on any changed Go file.
+- Run `go vet ./...` if code changed.
+- Run the smallest relevant `go test` command first, then `go test ./...` if
+  the change touches shared behavior.
+- Keep the final diff limited to the requested files.
 
-- Use `gopkg.in/yaml.v3` for YAML parsing
-- Define unexported `_Config` struct for raw parsing, then convert to exported type
-- Use `yaml:",inline"` for embedded config fields:
-```go
-type PreloaderConfig struct {
-    ForwardConfig `yaml:",inline"`
-}
-```
+## Cursor and Copilot rules
 
-### Type-Safe Enum Pattern
+This repo does not contain any of these files:
 
-```go
-type ResolverType string
+- `.cursorrules`
+- `.cursor/rules/`
+- `.github/copilot-instructions.md`
 
-const (
-    FILTER        ResolverType = "filter"
-    FORWARD       ResolverType = "forward"
-)
-
-func (f ForwardConfig) Type() ResolverType {
-    return FORWARD
-}
-```
-
----
-
-## Project Structure
-
-```
-dns-switchy/
-├── main.go           # Entry point, config watching
-├── server.go         # DNS server implementation
-├── config/           # Configuration parsing
-│   ├── config.go
-│   └── config_test.go
-├── resolver/         # DNS resolver implementations
-│   ├── init.go       # Resolver factory
-│   ├── dns.go        # DnsResolver interface
-│   ├── forward.go    # Upstream forwarding
-│   ├── filter.go     # Query filtering
-│   ├── file.go       # File-based resolution
-│   └── mock.go       # Mock resolver for testing
-├── util/             # Utilities
-│   ├── cache.go      # TTL cache
-│   └── matcher.go    # Domain/query type matchers
-├── config.yaml       # Default configuration
-└── go.mod
-```
-
----
-
-## Key Patterns
-
-### Resolver Chain
-Resolvers are checked in order. Each resolver's `Accept()` method determines if it handles the query. First match wins.
-
-### Domain Matching
-Domain rules use hierarchical matching: `qq.com` matches `www.qq.com` and `api.qq.com`.
-
-### Rule Inclusion
-Config supports `include:path/to/file.txt` for loading external rule files.
-
-### Graceful Reload
-Server watches config file for changes and hot-reloads without downtime.
-
----
-
-## Notes
-
-- Binary is built for linux/arm64 in CI (see `.drone.yml`)
-- HTTP endpoint available for DNS-over-HTTP queries
-- Pprof enabled on port 6060 for debugging
+Do not assume extra editor rules exist unless they are added later.
