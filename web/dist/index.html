@@ -79,7 +79,7 @@ body{
 /* ─── Card ─── */
 .card{
   width:100%;
-  max-width:640px;
+  max-width:960px;
   background:var(--surface);
   border:1px solid var(--border);
   border-radius:var(--radius-lg);
@@ -240,10 +240,7 @@ select:focus{border-color:var(--accent)}
   font-family:var(--mono);
   color:var(--text-muted);
   font-size:.75rem;
-  max-width:140px;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
+  word-break:break-all;
 }
 .td-type{
   font-family:var(--mono);
@@ -317,7 +314,7 @@ select:focus{border-color:var(--accent)}
   .btn{flex:1}
   .results{padding:1rem}
   .answer-table{font-size:.75rem}
-  .td-name{max-width:90px}
+  .td-name{word-break:break-all}
   .header h1{font-size:1.375rem}
 }
 </style>
