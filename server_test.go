@@ -202,10 +202,10 @@ func TestHttpHandlerNormalizeQuestionKey(t *testing.T) {
 		},
 	}})
 
-	r := httptest.NewRequest(http.MethodGet, "/dns-query?question=WWW.Example.COM&type=A", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/query?question=WWW.Example.COM&type=A", nil)
 	w := httptest.NewRecorder()
 
-	server.httpHandler().ServeHTTP(w, r)
+	server.httpMux().ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("http status = %d, want %d", w.Code, http.StatusOK)
@@ -232,10 +232,10 @@ func TestHttpHandlerDefaultsTypeToA(t *testing.T) {
 		},
 	}})
 
-	r := httptest.NewRequest(http.MethodGet, "/dns-query?question=example.com", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/query?question=example.com", nil)
 	w := httptest.NewRecorder()
 
-	server.httpHandler().ServeHTTP(w, r)
+	server.httpMux().ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("http status = %d, want %d", w.Code, http.StatusOK)
@@ -257,10 +257,10 @@ func TestHttpHandlerMissingQuestionReturnsBadRequest(t *testing.T) {
 		},
 	}})
 
-	r := httptest.NewRequest(http.MethodGet, "/dns-query?type=A", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/query?type=A", nil)
 	w := httptest.NewRecorder()
 
-	server.httpHandler().ServeHTTP(w, r)
+	server.httpMux().ServeHTTP(w, r)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("http status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -531,10 +531,10 @@ func TestHttpInvalidTypeReturnsBadRequest(t *testing.T) {
 		},
 	}})
 
-	r := httptest.NewRequest(http.MethodGet, "/dns-query?question=example.com&type=NOT_A_REAL_TYPE", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/query?question=example.com&type=NOT_A_REAL_TYPE", nil)
 	w := httptest.NewRecorder()
 
-	server.httpHandler().ServeHTTP(w, r)
+	server.httpMux().ServeHTTP(w, r)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("http status = %d, want %d", w.Code, http.StatusBadRequest)

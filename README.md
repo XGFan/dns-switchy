@@ -12,6 +12,7 @@
 - **全局缓存**：按 resolver 或全局 TTL 缓存响应
 - **热重载**：修改配置文件后自动重载，无需重启
 - **HTTP API**：可选的 HTTP 查询接口
+- **Web Portal**：内置 Web 管理页面，通过浏览器查询 DNS 解析结果（域名 + 类型 → resolver 名称 + 解析结果），查询不走缓存
 
 ## 快速开始
 
@@ -38,7 +39,7 @@ go build -o dns-switchy
 ```yaml
 addr: ":1053"
 ttl: 5m
-http: ":8080"          # 可选，HTTP API
+http: ":8080"          # 可选，HTTP API + Web Portal
 resolvers:
   - type: forward
     name: cn-dns

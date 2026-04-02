@@ -2,14 +2,8 @@ package main
 
 import (
 	"context"
-	"dns-switchy/config"
-	"dns-switchy/resolver"
-	"dns-switchy/util"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"github.com/miekg/dns"
-	"log"
+	"embed"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -18,7 +12,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+
+	"dns-switchy/config"
+	"dns-switchy/resolver"
+	"dns-switchy/util"
+
+	"github.com/miekg/dns"
 )
+
+//go:embed all:web/dist
+var webFS embed.FS
 
 func ReadConfig(file *string) (*config.SwitchyConfig, error) {
 	log.Printf("Config: %s", *file)
@@ -80,7 +88,7 @@ func (s *DnsSwitchyServer) Start() {
 	s.wg.Add(1)
 	go s.StartPlainUDPServer()
 	if s.config.Http != nil {
-		s.httpServer = &http.Server{Handler: s.httpHandler()}
+		s.httpServer = &http.Server{Handler: s.httpMux()}
 		s.wg.Add(1)
 		go s.StartHttpServer()
 	}
@@ -115,27 +123,53 @@ func (s *DnsSwitchyServer) plainUDPHandler() dns.HandlerFunc {
 	}
 }
 
-func (s *DnsSwitchyServer) httpHandler() http.Handler {
+func (s *DnsSwitchyServer) httpMux() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/query", s.apiQueryHandler)
+	mux.Handle("/", spaHandler())
+	return mux
+}
+
+func (s *DnsSwitchyServer) apiQueryHandler(w http.ResponseWriter, r *http.Request) {
+	queryType := r.URL.Query().Get("type")
+	if queryType == "" {
+		queryType = "A"
+	}
+	queryTypeValue, ok := dns.StringToType[strings.ToUpper(queryType)]
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Invalid type"))
+		return
+	}
+	question := r.URL.Query().Get("question")
+	if question == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Missing question"))
+		return
+	}
+	m := new(dns.Msg)
+	m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: queryTypeValue, Qclass: dns.ClassINET})
+	s.resolveOnly(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
+}
+
+func spaHandler() http.Handler {
+	subFS, err := fs.Sub(webFS, "web/dist")
+	if err != nil {
+		log.Printf("embed web/dist: %v", err)
+		return http.NotFoundHandler()
+	}
+	fileServer := http.FileServer(http.FS(subFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queryType := r.URL.Query().Get("type")
-		if queryType == "" {
-			queryType = "A"
+		path := r.URL.Path
+		if path != "/" {
+			cleanPath := strings.TrimPrefix(path, "/")
+			if f, err := fs.Stat(subFS, cleanPath); err == nil && !f.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
-		queryTypeValue, ok := dns.StringToType[strings.ToUpper(queryType)]
-		if !ok {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte("Invalid type"))
-			return
-		}
-		question := r.URL.Query().Get("question")
-		if question == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte("Missing question"))
-			return
-		}
-		m := new(dns.Msg)
-		m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: queryTypeValue, Qclass: dns.ClassINET})
-		s.dnsMsgHandler(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
 	})
 }
 
@@ -151,6 +185,19 @@ func (s *DnsSwitchyServer) dnsMsgHandler(resultWriter ResultWriter, msg *dns.Msg
 	}
 	if cached := s.dnsCache.Get(msg.Question[0]); !reflect.DeepEqual(cached, util.None) {
 		resultWriter.Success("dnsCache", &cached)
+		return
+	}
+	s.resolveOnly(resultWriter, msg)
+}
+
+func (s *DnsSwitchyServer) resolveOnly(resultWriter ResultWriter, msg *dns.Msg) {
+	if checkAndUnify(msg) != nil {
+		if msg == nil {
+			log.Printf("[%s] send invalid nil msg", resultWriter.RemoteAddr())
+		} else {
+			log.Printf("[%s] send invalid msg [%s]", resultWriter.RemoteAddr(), msg.String())
+		}
+		resultWriter.Rcode(dns.RcodeFormatError)
 		return
 	}
 	for i, upstream := range s.resolvers {

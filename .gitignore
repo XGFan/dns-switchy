@@ -1,1 +1,5 @@
 .idea
+dns-switchy
+local.yaml
+ric.yaml
+router.yaml

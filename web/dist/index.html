@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DNS Switchy</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f6f8fa;
+  --surface:#ffffff;
+  --surface-raised:#f0f2f5;
+  --border:#d0d7de;
+  --border-subtle:#e1e4e8;
+  --text:#1f2328;
+  --text-muted:#656d76;
+  --text-dim:#8c959f;
+  --accent:#0969da;
+  --accent-muted:#0550ae;
+  --accent-subtle:rgba(9,105,218,.08);
+  --green:#1a7f37;
+  --green-subtle:rgba(26,127,55,.08);
+  --red:#cf222e;
+  --red-subtle:rgba(207,34,46,.08);
+  --yellow:#9a6700;
+  --radius:8px;
+  --radius-lg:12px;
+  --shadow:0 1px 3px rgba(31,35,40,.08),0 4px 12px rgba(31,35,40,.04);
+  --shadow-lg:0 8px 32px rgba(31,35,40,.08);
+  --mono:"SF Mono","Cascadia Code","Fira Code","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --transition:150ms cubic-bezier(.4,0,.2,1);
+}
+html{font-size:16px}
+body{
+  font-family:var(--sans);
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  padding:2rem 1rem;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ─── Header ─── */
+.header{
+  text-align:center;
+  margin-bottom:2rem;
+}
+.header h1{
+  font-size:1.75rem;
+  font-weight:700;
+  letter-spacing:-.02em;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:.6rem;
+}
+.header h1 .icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:36px;height:36px;
+  background:var(--accent-subtle);
+  border:1px solid var(--accent-muted);
+  border-radius:var(--radius);
+  font-size:1.1rem;
+}
+.header p{
+  color:var(--text-muted);
+  font-size:.875rem;
+  margin-top:.35rem;
+}
+
+/* ─── Card ─── */
+.card{
+  width:100%;
+  max-width:640px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+
+/* ─── Query Form ─── */
+.query-form{
+  padding:1.25rem 1.5rem;
+  display:flex;
+  gap:.625rem;
+  border-bottom:1px solid var(--border-subtle);
+}
+.input-wrap{
+  flex:1;
+  position:relative;
+}
+.input-wrap input{
+  width:100%;
+  height:40px;
+  padding:0 .875rem;
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:.875rem;
+  outline:none;
+  transition:border-color var(--transition);
+}
+.input-wrap input::placeholder{color:var(--text-dim)}
+.input-wrap input:focus{border-color:var(--accent)}
+select{
+  height:40px;
+  padding:0 .625rem;
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:.8125rem;
+  cursor:pointer;
+  outline:none;
+  appearance:none;
+  -webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e'%3E%3Cpath d='M6 8.5L1.5 4h9z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right .5rem center;
+  padding-right:1.625rem;
+  transition:border-color var(--transition);
+}
+select:focus{border-color:var(--accent)}
+.btn{
+  height:40px;
+  padding:0 1.125rem;
+  background:var(--accent-muted);
+  color:#fff;
+  border:1px solid var(--accent-muted);
+  border-radius:var(--radius);
+  font-family:var(--sans);
+  font-size:.8125rem;
+  font-weight:600;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:background var(--transition),border-color var(--transition);
+}
+.btn:hover{background:var(--accent);border-color:var(--accent)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* ─── Results ─── */
+.results{
+  padding:1.25rem 1.5rem;
+  min-height:120px;
+}
+
+/* Empty state */
+.empty{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:2rem 0;
+  color:var(--text-dim);
+  font-size:.8125rem;
+  gap:.5rem;
+}
+.empty svg{opacity:.35}
+
+/* Loading */
+.loading{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:2.5rem 0;
+  gap:.75rem;
+  color:var(--text-muted);
+  font-size:.875rem;
+}
+.spinner{
+  width:18px;height:18px;
+  border:2px solid var(--border);
+  border-top-color:var(--accent);
+  border-radius:50%;
+  animation:spin .6s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Resolver badge */
+.resolver-row{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  margin-bottom:1rem;
+  font-size:.8125rem;
+}
+.resolver-label{color:var(--text-muted)}
+.resolver-name{
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  padding:.2rem .6rem;
+  background:var(--accent-subtle);
+  color:var(--accent);
+  border:1px solid rgba(56,139,253,.2);
+  border-radius:999px;
+  font-family:var(--mono);
+  font-size:.75rem;
+  font-weight:500;
+}
+
+/* Answer table */
+.answer-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:.8125rem;
+}
+.answer-table th{
+  text-align:left;
+  color:var(--text-muted);
+  font-weight:500;
+  font-size:.6875rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  padding:.5rem .625rem;
+  border-bottom:1px solid var(--border);
+  background:var(--surface-raised);
+}
+.answer-table td{
+  padding:.5rem .625rem;
+  border-bottom:1px solid var(--border-subtle);
+  vertical-align:top;
+}
+.answer-table tr:last-child td{border-bottom:none}
+.answer-table tr:hover td{background:rgba(255,255,255,.02)}
+.td-name{
+  font-family:var(--mono);
+  color:var(--text-muted);
+  font-size:.75rem;
+  max-width:140px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.td-type{
+  font-family:var(--mono);
+  font-weight:600;
+  font-size:.6875rem;
+  padding:.15rem .4rem;
+  background:var(--green-subtle);
+  color:var(--green);
+  border-radius:4px;
+  display:inline-block;
+}
+.td-ttl{
+  font-family:var(--mono);
+  color:var(--text-dim);
+  font-size:.75rem;
+}
+.td-value{
+  font-family:var(--mono);
+  color:var(--text);
+  font-size:.8125rem;
+  word-break:break-all;
+}
+
+/* Error */
+.error-box{
+  display:flex;
+  align-items:flex-start;
+  gap:.75rem;
+  padding:.875rem 1rem;
+  background:var(--red-subtle);
+  border:1px solid rgba(248,81,73,.25);
+  border-radius:var(--radius);
+  color:var(--red);
+  font-size:.8125rem;
+  line-height:1.5;
+}
+.error-box svg{flex-shrink:0;margin-top:1px}
+.error-box code{
+  display:block;
+  margin-top:.25rem;
+  font-family:var(--mono);
+  font-size:.75rem;
+  color:var(--text-muted);
+  word-break:break-all;
+}
+
+/* No records */
+.no-records{
+  text-align:center;
+  padding:1.5rem 0;
+  color:var(--text-muted);
+  font-size:.8125rem;
+}
+
+/* ─── Footer ─── */
+.footer{
+  margin-top:1.5rem;
+  font-size:.6875rem;
+  color:var(--text-dim);
+}
+
+/* ─── Responsive ─── */
+@media(max-width:520px){
+  body{padding:1rem .75rem}
+  .query-form{
+    flex-wrap:wrap;
+    padding:1rem;
+  }
+  .input-wrap{flex-basis:100%}
+  select{flex:1}
+  .btn{flex:1}
+  .results{padding:1rem}
+  .answer-table{font-size:.75rem}
+  .td-name{max-width:90px}
+  .header h1{font-size:1.375rem}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    <span class="icon">⚡</span>
+    DNS Switchy
+  </h1>
+  <p>DNS proxy lookup tool</p>
+</div>
+
+<div class="card">
+  <form class="query-form" id="queryForm">
+    <div class="input-wrap">
+      <input type="text" id="domain" placeholder="example.com" autocomplete="off" spellcheck="false" autofocus>
+    </div>
+    <select id="qtype">
+      <option value="A" selected>A</option>
+      <option value="AAAA">AAAA</option>
+      <option value="CNAME">CNAME</option>
+      <option value="MX">MX</option>
+      <option value="TXT">TXT</option>
+      <option value="NS">NS</option>
+      <option value="SOA">SOA</option>
+      <option value="PTR">PTR</option>
+      <option value="SRV">SRV</option>
+      <option value="CAA">CAA</option>
+    </select>
+    <button class="btn" type="submit" id="lookupBtn">Lookup</button>
+  </form>
+  <div class="results" id="results">
+    <div class="empty">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Enter a domain to query</span>
+    </div>
+  </div>
+</div>
+
+<div class="footer">DNS Switchy — resolver proxy</div>
+
+<script>
+(function(){
+  var form = document.getElementById('queryForm');
+  var domainInput = document.getElementById('domain');
+  var qtypeSelect = document.getElementById('qtype');
+  var lookupBtn = document.getElementById('lookupBtn');
+  var results = document.getElementById('results');
+
+  var RTYPE_MAP = {
+    1:'A', 2:'NS', 5:'CNAME', 6:'SOA', 12:'PTR',
+    15:'MX', 16:'TXT', 28:'AAAA', 33:'SRV', 257:'CAA'
+  };
+
+  function esc(s){
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function extractValue(rec, rrtype){
+    switch(rrtype){
+      case 1:  return rec.A || '';
+      case 28: return rec.AAAA || rec.Aaaa || '';
+      case 5:  return rec.Cname || rec.Target || '';
+      case 15: return (rec.Preference != null ? rec.Preference + ' ' : '') + (rec.Mx || '');
+      case 16:
+        if(Array.isArray(rec.Txt)) return rec.Txt.join(' ');
+        return rec.Txt || '';
+      case 2:  return rec.Ns || '';
+      case 6:
+        return [rec.Ns, rec.Mbox, 'serial=' + (rec.Serial||''),
+                'refresh=' + (rec.Refresh||''), 'retry=' + (rec.Retry||''),
+                'expire=' + (rec.Expire||''), 'minttl=' + (rec.Minttl||'')
+               ].filter(Boolean).join(' ');
+      case 12: return rec.Ptr || '';
+      case 33:
+        return (rec.Priority||0) + ' ' + (rec.Weight||0) + ' ' +
+               (rec.Port||0) + ' ' + (rec.Target||'');
+      case 257:
+        return (rec.Flag != null ? rec.Flag + ' ' : '') +
+               (rec.Tag ? rec.Tag + ' ' : '') + (rec.Value || '');
+      default:
+        try{ return JSON.stringify(rec); }catch(e){ return String(rec); }
+    }
+  }
+
+  function renderLoading(){
+    results.innerHTML = '<div class="loading"><div class="spinner"></div>Resolving…</div>';
+  }
+
+  function renderError(msg, detail){
+    results.innerHTML =
+      '<div class="error-box">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>' +
+        '<div><strong>' + esc(msg) + '</strong>' +
+          (detail ? '<code>' + esc(detail) + '</code>' : '') +
+        '</div>' +
+      '</div>';
+  }
+
+  function renderResult(data){
+    var html = '';
+
+    if(data.resolver){
+      html += '<div class="resolver-row">' +
+        '<span class="resolver-label">Resolver</span>' +
+        '<span class="resolver-name">' +
+          '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>' +
+          esc(data.resolver) +
+        '</span>' +
+      '</div>';
+    }
+
+    if(data.error){
+      var errMsg = '';
+      if(typeof data.error === 'string') errMsg = data.error;
+      else if(data.error.message) errMsg = data.error.message;
+      else try{ errMsg = JSON.stringify(data.error); }catch(e){ errMsg = String(data.error); }
+      html += '<div class="error-box">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>' +
+        '<div><strong>Query failed</strong><code>' + esc(errMsg) + '</code></div>' +
+      '</div>';
+      results.innerHTML = html;
+      return;
+    }
+
+    var answer = data.answer;
+    if(!answer || !answer.Answer || answer.Answer.length === 0){
+      html += '<div class="no-records">No records found</div>';
+      results.innerHTML = html;
+      return;
+    }
+
+    html += '<table class="answer-table"><thead><tr>' +
+      '<th>Name</th><th>Type</th><th>TTL</th><th>Value</th>' +
+    '</tr></thead><tbody>';
+
+    for(var i = 0; i < answer.Answer.length; i++){
+      var rec = answer.Answer[i];
+      var hdr = rec.Hdr || {};
+      var name = hdr.Name || '';
+      var rrtype = hdr.Rrtype || 0;
+      var ttl = hdr.Ttl != null ? hdr.Ttl : '';
+      var typeName = RTYPE_MAP[rrtype] || ('TYPE' + rrtype);
+      var value = extractValue(rec, rrtype);
+
+      html += '<tr>' +
+        '<td class="td-name" title="' + esc(name) + '">' + esc(name) + '</td>' +
+        '<td><span class="td-type">' + esc(typeName) + '</span></td>' +
+        '<td class="td-ttl">' + esc(String(ttl)) + '</td>' +
+        '<td class="td-value">' + esc(value) + '</td>' +
+      '</tr>';
+    }
+
+    html += '</tbody></table>';
+    results.innerHTML = html;
+  }
+
+  function doLookup(){
+    var domain = domainInput.value.trim();
+    if(!domain) { domainInput.focus(); return; }
+
+    var qtype = qtypeSelect.value;
+    lookupBtn.disabled = true;
+    renderLoading();
+
+    var url = '/api/query?question=' + encodeURIComponent(domain) + '&type=' + encodeURIComponent(qtype);
+
+    fetch(url).then(function(resp){
+      if(!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+      return resp.json();
+    }).then(function(data){
+      renderResult(data);
+    }).catch(function(err){
+      renderError('Request failed', err.message || String(err));
+    }).finally(function(){
+      lookupBtn.disabled = false;
+    });
+  }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    doLookup();
+  });
+})();
+</script>
+</body>
+</html>
