@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.1"
+          go-version-file: go.mod
       - run: go vet ./...
       - run: go test -timeout 3m ./...
 
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.1"
+          go-version-file: go.mod
       - name: Build
         env:
           CGO_ENABLED: "0"
@@ -46,7 +46,7 @@ jobs:
         with:
           version: latest
           files: dns-switchy
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: dns-switchy
           path: dns-switchy
@@ -59,13 +59,11 @@ jobs:
       - name: Determine status
         id: status
         run: |
-          FAILED=false
-          for result in "${{ needs.test.result }}" "${{ needs.build.result }}"; do
-            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
-              FAILED=true
-            fi
-          done
-          if [ "$FAILED" = "true" ]; then echo "result=failure" >> "$GITHUB_OUTPUT"; else echo "result=success" >> "$GITHUB_OUTPUT"; fi
+          if [[ "${{ needs.test.result }}" == "success" && "${{ needs.build.result }}" == "success" ]]; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
       - uses: shink/bark-action@v3
         if: env.BARK_TOKEN != ''
         env:

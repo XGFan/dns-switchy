@@ -27,7 +27,7 @@ jobs:
        github.event.workflow_run.head_branch == 'master')
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8
         with:
           name: dns-switchy
           path: .
@@ -50,7 +50,7 @@ jobs:
 
           chmod +x dns-switchy
           scp ${SSH_OPTS} dns-switchy "${SSH_USER}@${SSH_HOST}:/tmp/"
-          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" 'mv /tmp/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy && /etc/init.d/dns-switchy restart'
+          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" 'mv /tmp/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy && /etc/init.d/dns-switchy restart && sleep 2 && pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1)'
 
           rm -rf "${SSH_TMPDIR}" /tmp/.ssh_tmpdir_path
 
