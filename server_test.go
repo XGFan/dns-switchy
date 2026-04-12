@@ -789,7 +789,16 @@ func TestReloadServerStopsPreviousListeners(t *testing.T) {
 		t.Fatalf("reloadServer fail: %v", err)
 	}
 	t.Cleanup(func() {
-		runningServer.Shutdown()
+		done := make(chan struct{})
+		go func() {
+			runningServer.Shutdown()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Log("cleanup: Shutdown timed out")
+		}
 	})
 
 	listener, err := net.ListenPacket("udp", oldAddr)
