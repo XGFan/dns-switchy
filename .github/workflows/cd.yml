@@ -10,6 +10,10 @@ on:
         description: "CI workflow run ID to deploy"
         required: true
 
+permissions:
+  actions: read
+  contents: read
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -36,27 +40,34 @@ jobs:
           SSH_HOST: ${{ secrets.OPENWRT_HOST }}
           SSH_USER: ${{ secrets.OPENWRT_USER }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${SSH_KEY}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          SSH_TMPDIR=$(mktemp -d)
+          echo "${SSH_TMPDIR}" > /tmp/.ssh_tmpdir_path
+          echo "${SSH_KEY}" > "${SSH_TMPDIR}/deploy_key"
+          chmod 600 "${SSH_TMPDIR}/deploy_key"
+          ssh-keyscan -H "${SSH_HOST}" > "${SSH_TMPDIR}/known_hosts" 2>/dev/null
 
-          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          SSH_OPTS="-i ${SSH_TMPDIR}/deploy_key -o UserKnownHostsFile=${SSH_TMPDIR}/known_hosts"
 
           chmod +x dns-switchy
           scp ${SSH_OPTS} dns-switchy "${SSH_USER}@${SSH_HOST}:/tmp/"
           ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" 'mv /tmp/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy && /etc/init.d/dns-switchy restart'
 
+          rm -rf "${SSH_TMPDIR}" /tmp/.ssh_tmpdir_path
+
       - name: Cleanup
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: |
+          if [ -f /tmp/.ssh_tmpdir_path ]; then
+            rm -rf "$(cat /tmp/.ssh_tmpdir_path)" /tmp/.ssh_tmpdir_path
+          fi
 
       - name: Send Bark notification
         if: always() && env.BARK_TOKEN != ''
+        continue-on-error: true
         uses: shink/bark-action@v3
         env:
           BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
         with:
           key: ${{ secrets.BARK_TOKEN }}
           title: "${{ github.repository }} CD ${{ job.status }}"
-          body: "${{ github.event.workflow_run.head_sha || github.sha }}"
+          body: "${{ github.event.workflow_run.head_commit.message || github.sha }}"

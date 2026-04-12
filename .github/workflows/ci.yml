@@ -3,9 +3,13 @@ name: CI
 on:
   push:
     branches: [master]
-    paths-ignore: ["**.md", LICENSE]
+    paths-ignore: ["**.md", LICENSE, .claude/**, .omc/**, .gitignore]
   pull_request:
-    paths-ignore: ["**.md", LICENSE]
+    branches: [master]
+    paths-ignore: ["**.md", LICENSE, .claude/**, .omc/**, .gitignore]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
