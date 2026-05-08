@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -eu
+
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+
+action="${1:-}"
+
+case "${action}" in
+  remove|purge|deconfigure)
+    rm -f /var/run/dns-switchy.pid /var/run/dns-switchy.yaml
+
+    if [ ! -e /etc/dns-switchy/config.yaml ]; then
+      rmdir /etc/dns-switchy >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0

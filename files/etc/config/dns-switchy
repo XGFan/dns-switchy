@@ -1,0 +1,4 @@
+config dns-switchy 'main'
+	option enabled '1'
+	option listen_addr ':1053'
+	option http_port '8080'

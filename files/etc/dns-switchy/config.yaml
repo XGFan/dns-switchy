@@ -1,0 +1,7 @@
+addr: ":1053"
+http: ":8080"
+ttl: 5m
+resolvers:
+  - name: default
+    type: forward
+    url: 114.114.114.114

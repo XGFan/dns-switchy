@@ -1,5 +1,6 @@
 .idea
-dns-switchy
+/dns-switchy
+/dist/
 local.yaml
 ric.yaml
 router.yaml

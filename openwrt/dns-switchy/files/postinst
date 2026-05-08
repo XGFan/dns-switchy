@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+
+guest_initd="/etc/init.d/dns-switchy"
+
+if [ -x "${guest_initd}" ]; then
+  "${guest_initd}" enable >/dev/null 2>&1 || true
+  "${guest_initd}" restart >/dev/null 2>&1 || "${guest_initd}" start >/dev/null 2>&1 || true
+fi
+
+exit 0
