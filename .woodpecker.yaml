@@ -9,13 +9,13 @@ steps:
       - go vet ./...
       - go test -timeout 3m ./...
 
-  - name: build
+  - name: build-ipk
     image: golang:1.26-alpine
     commands:
-      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dns-switchy
-    environment:
-      GOFLAGS: -trimpath
-      LDFLAGS: -s -w
+      - apk add --no-cache tar fakeroot gzip bash git python3
+      - SHORT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
+      - bash scripts/build-openwrt-ipk.sh --version "v0.0.0-$SHORT_SHA" --arch x86_64
+      - ls -lh dist/ipk/*/artifacts/*.ipk
 
   - name: deploy
     image: alpine
@@ -26,10 +26,10 @@ steps:
       - chmod 600 ~/.ssh/deploy_key
       - ssh-keyscan -H "$OPENWRT_HOST" >> ~/.ssh/known_hosts 2>/dev/null
       - SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
-      - scp $SSH_OPTS dns-switchy "$OPENWRT_USER@$OPENWRT_HOST:/tmp/"
+      - scp $SSH_OPTS dist/ipk/*/artifacts/*.ipk "$OPENWRT_USER@$OPENWRT_HOST:/tmp/"
       - |
         ssh $SSH_OPTS "$OPENWRT_USER@$OPENWRT_HOST" \
-          'mv /tmp/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy && /etc/init.d/dns-switchy restart && sleep 2 && pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1)'
+          'opkg install /tmp/dns-switchy_*.ipk && opkg install /tmp/luci-app-dns-switchy_*.ipk && /etc/init.d/dns-switchy restart && sleep 2 && pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1) && rm -f /tmp/*.ipk'
       - rm -f ~/.ssh/deploy_key
     environment:
       CI_SSH_KEY:

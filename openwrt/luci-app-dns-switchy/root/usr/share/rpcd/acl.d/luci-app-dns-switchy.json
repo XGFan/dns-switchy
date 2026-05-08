@@ -1,0 +1,15 @@
+{
+  "luci-app-dns-switchy": {
+    "description": "Grant access to DNS-Switchy LuCI shell entry",
+    "read": {
+      "ubus": {
+        "session": [
+          "access"
+        ]
+      },
+      "uci": [
+        "dns-switchy"
+      ]
+    }
+  }
+}
