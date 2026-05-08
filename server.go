@@ -148,7 +148,7 @@ func (s *DnsSwitchyServer) apiQueryHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	m := new(dns.Msg)
-	m.Question = append(m.Question, dns.Question{Name: dns.Fqdn(question), Qtype: queryTypeValue, Qclass: dns.ClassINET})
+	m.SetQuestion(dns.Fqdn(question), queryTypeValue)
 	s.resolveOnly(&HttpWriter{w, m, time.Now().UnixMilli()}, m)
 }
 

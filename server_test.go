@@ -216,6 +216,33 @@ func TestHttpHandlerNormalizeQuestionKey(t *testing.T) {
 	}
 }
 
+func TestHttpHandlerSetsRecursionDesired(t *testing.T) {
+	var sawRD bool
+	server := newServerForTest([]resolver.DnsResolver{&testResolver{
+		acceptFn: func(msg *dns.Msg) bool {
+			sawRD = msg.RecursionDesired
+			return true
+		},
+		resolveFn: func(msg *dns.Msg) (*dns.Msg, error) {
+			resp := new(dns.Msg)
+			resp.SetReply(msg)
+			return resp, nil
+		},
+	}})
+
+	r := httptest.NewRequest(http.MethodGet, "/api/query?question=smzdm.com&type=A", nil)
+	w := httptest.NewRecorder()
+
+	server.httpMux().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("http status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !sawRD {
+		t.Fatal("resolver received query with RecursionDesired=false; upstream DoH returns SERVFAIL when RD bit is unset")
+	}
+}
+
 func TestHttpHandlerDefaultsTypeToA(t *testing.T) {
 	var acceptedType uint16
 	resolveCalls := 0
