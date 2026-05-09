@@ -207,10 +207,12 @@ rule:
   - v2fly:google   # Google 相关域名
 ```
 
-- 自动从 GitHub 下载纯文本列表
-- 缓存到 `~/.dns-switchy/cache/`，有效期 24 小时
-- 缓存过期后尝试更新，更新失败则继续使用旧缓存
-- 首次下载失败不阻塞启动，记录警告日志并跳过
+- 自动从 GitHub 下载纯文本列表，下载发生在后台 goroutine
+- 启动时仅读缓存，不发网络请求；缺失或过期会标记并由后台 30s ticker 重试，下载成功后触发热重载
+- 缓存有效期 24 小时；过期仍可用，背景刷新成功后替换
+- 缓存目录按优先级选择：`$DNS_SWITCHY_CACHE_DIR` → `$HOME/.dns-switchy/cache` → `$TMPDIR/dns-switchy/cache`（前者无法 mkdir 时自动 fallback）
+- procd-spawned 服务（HOME=`/`）建议显式 `DNS_SWITCHY_CACHE_DIR=/etc/dns-switchy/cache` 等持久路径，避免缓存随 tmpfs 重启丢失
+- 磁盘写入失败时下载内容暂存进程内存，下次 reload 仍能生效（read-only 文件系统场景）
 
 列表中的 `domain:` 条目作为后缀匹配，`full:`、`keyword:`、`regexp:` 保留各自语义。`include:` 和未知前缀被忽略。
 
