@@ -478,22 +478,99 @@ func TestFetchV2flyListStaleWithDownloadFailure(t *testing.T) {
 	}
 }
 
-func TestFetchV2flyListNoCacheDownloadFailure(t *testing.T) {
+func TestV2flyCacheDirPrefersEnvOverHome(t *testing.T) {
+	custom := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("DNS_SWITCHY_CACHE_DIR", custom)
+	t.Setenv("HOME", home)
+
+	got, err := v2flyCacheDir()
+	if err != nil {
+		t.Fatalf("v2flyCacheDir() error = %v", err)
+	}
+	if got != custom {
+		t.Fatalf("v2flyCacheDir() = %q, want %q (env-var override)", got, custom)
+	}
+}
+
+func TestV2flyCacheDirSkipsRootHomeAndUnwritableEnv(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: read-only directory still allows writes, can't simulate failure")
+	}
+	unwritable := t.TempDir()
+	if err := os.Chmod(unwritable, 0o555); err != nil {
+		t.Fatalf("chmod unwritable dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unwritable, 0o755) })
+
+	t.Setenv("DNS_SWITCHY_CACHE_DIR", filepath.Join(unwritable, "blocked"))
+	t.Setenv("HOME", "/") // mimic procd-spawned services on OpenWrt
+
+	got, err := v2flyCacheDir()
+	if err != nil {
+		t.Fatalf("v2flyCacheDir() error = %v", err)
+	}
+	wantPrefix := filepath.Join(os.TempDir(), "dns-switchy")
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("v2flyCacheDir() = %q, want path under %q (TempDir fallback)", got, wantPrefix)
+	}
+}
+
+func TestFetchV2flyListPrefersInMemoryFallback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("DNS_SWITCHY_CACHE_DIR", "")
+
+	// Disk cache miss + in-memory copy populated by a previous failed write.
+	clearV2flyPending("mem-fallback")
+	clearV2flyMem("mem-fallback")
+	defer clearV2flyPending("mem-fallback")
+	defer clearV2flyMem("mem-fallback")
+
+	want := []string{"domain:from-memory.example", "full:exact.example"}
+	storeV2flyMem("mem-fallback", want)
+
+	got, err := fetchV2flyList("mem-fallback")
+	if err != nil {
+		t.Fatalf("fetchV2flyList() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fetchV2flyList() = %v, want %v (in-memory rules)", got, want)
+	}
+	for _, name := range snapshotPendingV2fly() {
+		if name == "mem-fallback" {
+			t.Fatalf("pending v2fly contains %q after in-memory hit; should have been cleared", name)
+		}
+	}
+}
+
+func TestFetchV2flyListNoCacheReturnsSentinel(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", dir)
 	defer os.Setenv("HOME", origHome)
 
-	origClient := includeHTTPClient
-	includeHTTPClient = &http.Client{Timeout: 1 * time.Millisecond}
-	defer func() { includeHTTPClient = origClient }()
+	clearV2flyPending("no-cache-sentinel")
+	defer clearV2flyPending("no-cache-sentinel")
 
-	got, err := fetchV2flyList("no-cache-dl-fail")
+	got, err := fetchV2flyList("no-cache-sentinel")
 	if err != nil {
 		t.Fatalf("fetchV2flyList() error = %v, want nil (non-blocking)", err)
 	}
-	if got != nil {
-		t.Fatalf("fetchV2flyList() = %v, want nil", got)
+	want := []string{v2flyPendingSentinel}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fetchV2flyList() = %v, want %v", got, want)
+	}
+	pending := snapshotPendingV2fly()
+	found := false
+	for _, name := range pending {
+		if name == "no-cache-sentinel" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("pending v2fly = %v, want it to contain %q", pending, "no-cache-sentinel")
 	}
 }
 

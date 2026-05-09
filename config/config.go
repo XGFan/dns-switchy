@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,16 +23,32 @@ var includeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 var v2flyCacheTTL = 24 * time.Hour
 
+// v2flyCacheDir picks a writable directory in this preference order:
+//  1. $DNS_SWITCHY_CACHE_DIR if set (lets operators pin a persistent path,
+//     e.g. /etc/dns-switchy/cache on OpenWrt where /tmp and /var are tmpfs).
+//  2. $HOME/.dns-switchy/cache when HOME is a real directory — procd-spawned
+//     services on OpenWrt run with HOME="/", which is treated as unset here.
+//  3. $TMPDIR/dns-switchy/cache as a last-resort fallback so the cache is
+//     never silently disabled when the higher-priority paths aren't writable.
 func v2flyCacheDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = os.TempDir()
+	candidates := make([]string, 0, 3)
+	if custom := strings.TrimSpace(os.Getenv("DNS_SWITCHY_CACHE_DIR")); custom != "" {
+		candidates = append(candidates, custom)
 	}
-	dir := filepath.Join(home, ".dns-switchy", "cache")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create cache dir %s: %w", dir, err)
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/" {
+		candidates = append(candidates, filepath.Join(home, ".dns-switchy", "cache"))
 	}
-	return dir, nil
+	candidates = append(candidates, filepath.Join(os.TempDir(), "dns-switchy", "cache"))
+
+	var lastErr error
+	for _, dir := range candidates {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			lastErr = err
+			continue
+		}
+		return dir, nil
+	}
+	return "", fmt.Errorf("create cache dir: all candidates failed (last: %w)", lastErr)
 }
 
 func v2flyCachePath(listName string) (string, error) {
@@ -64,6 +82,122 @@ func writeV2flyCache(listName string, lines []string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+var (
+	pendingV2flyMu sync.Mutex
+	pendingV2fly   = make(map[string]struct{})
+
+	// memV2flyCache is a process-local fallback for hosts where the disk cache
+	// directory is not writable (read-only container fs, hostile permissions).
+	// It is populated only when writeV2flyCache fails, so the freshly downloaded
+	// rules are still applied on the next reload instead of being thrown away.
+	// Disk persistence remains preferred whenever it works.
+	memV2flyMu    sync.Mutex
+	memV2flyCache = make(map[string][]string)
+)
+
+func storeV2flyMem(name string, lines []string) {
+	memV2flyMu.Lock()
+	defer memV2flyMu.Unlock()
+	memV2flyCache[name] = lines
+}
+
+func loadV2flyMem(name string) ([]string, bool) {
+	memV2flyMu.Lock()
+	defer memV2flyMu.Unlock()
+	lines, ok := memV2flyCache[name]
+	return lines, ok
+}
+
+func clearV2flyMem(name string) {
+	memV2flyMu.Lock()
+	defer memV2flyMu.Unlock()
+	delete(memV2flyCache, name)
+}
+
+func markV2flyPending(name string) {
+	pendingV2flyMu.Lock()
+	defer pendingV2flyMu.Unlock()
+	pendingV2fly[name] = struct{}{}
+}
+
+func clearV2flyPending(name string) {
+	pendingV2flyMu.Lock()
+	defer pendingV2flyMu.Unlock()
+	delete(pendingV2fly, name)
+}
+
+func snapshotPendingV2fly() []string {
+	pendingV2flyMu.Lock()
+	defer pendingV2flyMu.Unlock()
+	out := make([]string, 0, len(pendingV2fly))
+	for k := range pendingV2fly {
+		out = append(out, k)
+	}
+	return out
+}
+
+// StartV2flyRetry owns all v2fly network downloads. It periodically processes
+// the pending set populated by fetchV2flyList (entries with missing or stale
+// cache) and writes fresh cache files; on any successful download it calls
+// onRefresh so the caller can reload the config and rebuild matchers.
+//
+// A short grace delay before the first attempt lets the DNS server bind so
+// downloads do not chase a self-referential resolver during startup.
+func StartV2flyRetry(ctx context.Context, interval time.Duration, onRefresh func()) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+		runV2flyAttempt(onRefresh)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runV2flyAttempt(onRefresh)
+			}
+		}
+	}()
+}
+
+func runV2flyAttempt(onRefresh func()) {
+	pending := snapshotPendingV2fly()
+	if len(pending) == 0 {
+		return
+	}
+	refreshed := false
+	for _, name := range pending {
+		lines, err := downloadV2flyList(name)
+		if err != nil {
+			log.Printf("v2fly %s: background download failed: %v", name, err)
+			continue
+		}
+		if writeErr := writeV2flyCache(name, lines); writeErr != nil {
+			// Disk persistence failed; stash the freshly downloaded rules in
+			// memory so the next reload can still apply them. Keeps the
+			// resolver functional on read-only filesystems.
+			storeV2flyMem(name, lines)
+			log.Printf("v2fly %s: cache write failed: %v (using in-memory copy)", name, writeErr)
+		} else {
+			clearV2flyMem(name)
+		}
+		clearV2flyPending(name)
+		log.Printf("v2fly %s: background download succeeded (%d lines)", name, len(lines))
+		refreshed = true
+	}
+	if refreshed && onRefresh != nil {
+		onRefresh()
+	}
 }
 
 type SwitchyConfig struct {
@@ -436,29 +570,39 @@ func readIncludeRules(target string, isHTTP bool) ([]string, error) {
 	return strings.Split(string(all), "\n"), nil
 }
 
-func fetchV2flyList(listName string) ([]string, error) {
-	cached, fresh, cacheErr := readV2flyCache(listName)
-	if cacheErr == nil && fresh {
-		log.Printf("v2fly %s: using cached rules", listName)
-		return cached, nil
-	}
+// v2flyPendingSentinel keeps a v2fly:<list> rule from collapsing the resolver
+// to AcceptAll while the cache is being fetched in the background. The .invalid
+// TLD is reserved by RFC 6761, so this domain can never resolve nor match a
+// real query — the resolver effectively contributes nothing from this entry
+// until the background download writes a real cache and the config reloads.
+const v2flyPendingSentinel = "full:__v2fly_pending__.invalid"
 
-	v2flyURL := fmt.Sprintf("https://raw.githubusercontent.com/v2fly/domain-list-community/release/%s.txt", listName)
-	lines, dlErr := readIncludeRules(v2flyURL, true)
-	if dlErr == nil {
-		if writeErr := writeV2flyCache(listName, lines); writeErr != nil {
-			log.Printf("v2fly %s: cache write failed: %v", listName, writeErr)
-		}
+func fetchV2flyList(listName string) ([]string, error) {
+	if lines, ok := loadV2flyMem(listName); ok {
+		log.Printf("v2fly %s: using in-memory rules (disk cache unwritable)", listName)
+		clearV2flyPending(listName)
 		return lines, nil
 	}
-
+	cached, fresh, cacheErr := readV2flyCache(listName)
 	if cacheErr == nil {
-		log.Printf("v2fly %s: download failed (%v), using stale cache", listName, dlErr)
+		if fresh {
+			log.Printf("v2fly %s: using cached rules", listName)
+			clearV2flyPending(listName)
+			return cached, nil
+		}
+		log.Printf("v2fly %s: using stale cached rules; scheduling background refresh", listName)
+		markV2flyPending(listName)
 		return cached, nil
 	}
 
-	log.Printf("v2fly %s: download failed (%v) and no cache available", listName, dlErr)
-	return nil, nil
+	log.Printf("v2fly %s: no cache; scheduling background download", listName)
+	markV2flyPending(listName)
+	return []string{v2flyPendingSentinel}, nil
+}
+
+func downloadV2flyList(listName string) ([]string, error) {
+	v2flyURL := fmt.Sprintf("https://raw.githubusercontent.com/v2fly/domain-list-community/release/%s.txt", listName)
+	return readIncludeRules(v2flyURL, true)
 }
 
 func parseV2flyRules(lines []string) []string {

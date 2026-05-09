@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"dns-switchy/config"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -25,14 +27,21 @@ func main() {
 	go func() {
 		fmt.Println(http.ListenAndServe(":6060", nil))
 	}()
-	defer watchConfigFile(file, func(s *string) {
+	reload := func() {
 		newConfig, err := ReadConfig(file)
 		if err != nil {
 			log.Printf("Parse new config fail: %s", err)
 			return
 		}
 		configChan <- newConfig
-	})()
+	}
+	defer watchConfigFile(file, func(s *string) { reload() })()
+	retryCtx, cancelRetry := context.WithCancel(context.Background())
+	defer cancelRetry()
+	config.StartV2flyRetry(retryCtx, 30*time.Second, func() {
+		log.Printf("v2fly retry succeeded; reloading config")
+		reload()
+	})
 	var runningServer *DnsSwitchyServer
 	for newConfig := range configChan {
 		runningServer, err = reloadServer(runningServer, newConfig)
