@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,15 @@ func Test_parse(t *testing.T) {
 		defer func() {
 			BasePath = basePath
 		}()
+
+		t.Setenv("DNS_SWITCHY_CACHE_DIR", t.TempDir())
+		stub := make([]string, 0, 150)
+		for i := 0; i < 150; i++ {
+			stub = append(stub, "domain:stub"+strconv.Itoa(i)+".cn")
+		}
+		if err := writeV2flyCache("cn", stub); err != nil {
+			t.Fatalf("writeV2flyCache(cn) error = %v", err)
+		}
 
 		got, err := ParseConfig(file)
 		if err != nil {
