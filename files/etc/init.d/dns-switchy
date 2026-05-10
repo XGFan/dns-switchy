@@ -7,18 +7,17 @@ USER_CONFIG=/etc/dns-switchy/config.yaml
 RUNTIME_CONFIG=/var/run/dns-switchy.yaml
 
 generate_runtime_config() {
-	local listen_addr="$1"
-	local http_port="$2"
+	local http_port="$1"
 
 	mkdir -p /var/run
 
-	# UCI fields override yaml top-level addr:/http: lines
+	# UCI http_port overrides yaml top-level http: line; addr: stays in yaml
 	{
-		printf 'addr: "%s"\n' "${listen_addr}"
 		printf 'http: ":%s"\n' "${http_port}"
 		if [ -f "${USER_CONFIG}" ]; then
-			sed -E '/^addr:[[:space:]]/d; /^http:[[:space:]]/d' "${USER_CONFIG}"
+			sed -E '/^http:[[:space:]]/d' "${USER_CONFIG}"
 		else
+			echo 'addr: ":1053"'
 			echo 'ttl: 5m'
 			echo 'resolvers:'
 			echo '  - name: default'
@@ -32,14 +31,13 @@ start_service() {
 	. /lib/functions.sh
 	config_load 'dns-switchy'
 
-	local enabled listen_addr http_port
+	local enabled http_port
 	config_get_bool enabled 'main' 'enabled' 1
-	config_get listen_addr 'main' 'listen_addr' ':1053'
 	config_get http_port 'main' 'http_port' '8080'
 
 	[ "${enabled}" = '1' ] || return 1
 
-	generate_runtime_config "${listen_addr}" "${http_port}"
+	generate_runtime_config "${http_port}"
 
 	procd_open_instance dns-switchy
 	procd_set_param command /usr/bin/dns-switchy -c "${RUNTIME_CONFIG}"
