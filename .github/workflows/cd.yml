@@ -26,11 +26,11 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'master')
     steps:
-      - name: Download artifact
+      - name: Download IPK artifact
         uses: actions/download-artifact@v8
         with:
-          name: dns-switchy
-          path: .
+          name: dns-switchy-ipk
+          path: ipk
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
           github-token: ${{ github.token }}
 
@@ -48,9 +48,14 @@ jobs:
 
           SSH_OPTS="-i ${SSH_TMPDIR}/deploy_key -o UserKnownHostsFile=${SSH_TMPDIR}/known_hosts"
 
-          chmod +x dns-switchy
-          scp ${SSH_OPTS} dns-switchy "${SSH_USER}@${SSH_HOST}:/tmp/"
-          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" 'mv /tmp/dns-switchy /mnt/ext/app/dns-switchy/dns-switchy && /etc/init.d/dns-switchy restart && sleep 2 && pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1)'
+          ls -la ipk/
+          scp ${SSH_OPTS} ipk/*.ipk "${SSH_USER}@${SSH_HOST}:/tmp/"
+          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" 'set -e
+            cd /tmp
+            opkg install --force-reinstall ./dns-switchy_*_x86_64.ipk ./luci-app-dns-switchy_*_all.ipk
+            rm -f /tmp/dns-switchy_*_x86_64.ipk /tmp/luci-app-dns-switchy_*_all.ipk
+            sleep 2
+            pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1)'
 
           rm -rf "${SSH_TMPDIR}" /tmp/.ssh_tmpdir_path
 

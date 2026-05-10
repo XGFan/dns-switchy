@@ -32,24 +32,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Build
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: arm64
-        run: go build -o dns-switchy
-      - name: UPX compress
-        uses: crazy-max/ghaction-upx@v4
-        with:
-          version: latest
-          files: dns-switchy
+      - name: Build OpenWrt IPKs (x86_64)
+        run: |
+          version="v0.0.0-$(git rev-parse --short HEAD)"
+          echo "Building version: ${version}"
+          scripts/build-openwrt-ipk.sh --arch x86_64 --version "${version}"
+      - name: Stage artifacts
+        run: |
+          mkdir -p ipk-out
+          cp dist/ipk/*/artifacts/*.ipk ipk-out/
+          ls -la ipk-out/
       - uses: actions/upload-artifact@v7
         with:
-          name: dns-switchy
-          path: dns-switchy
+          name: dns-switchy-ipk
+          path: ipk-out/*.ipk
 
   notification:
     runs-on: ubuntu-latest
