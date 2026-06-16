@@ -1,0 +1,58 @@
+name: Release
+
+# 本仓库的 GitHub Actions 只做一件事：打 tag (v*) 时交叉编译各系统二进制，
+# 发布到 GitHub Release。测试 / OpenWrt IPK 构建 / 路由器部署由 Woodpecker
+# (.woodpecker.yaml) 负责，两边职责分开。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag (如 v0.1.0)"
+        required: true
+
+permissions:
+  contents: write   # 创建 release 需要写权限
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build cross-platform binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          # 注：依赖 XGFan/go-utils 有常量溢出 32-bit int，故只发 64-bit 目标
+          for target in \
+            linux/amd64 linux/arm64 \
+            darwin/amd64 darwin/arm64 \
+            windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            ext=""; [ "$os" = windows ] && ext=".exe"
+            out="dist/dns-switchy_${os}_${arch}${ext}"
+            echo "building ${out}"
+            GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w" -o "$out" .
+          done
+          (cd dist && sha256sum dns-switchy_* > checksums.txt)
+          ls -la dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes
