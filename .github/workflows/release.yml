@@ -52,7 +52,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/* \
+          # 仅上传本次编译产物 + 校验和（dist/ 里有仓库已跟踪的 OpenWrt/plist 文件，勿一并上传）
+          gh release create "$TAG" dist/dns-switchy_* dist/checksums.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --generate-notes
