@@ -1,0 +1,104 @@
+addr: "0.0.0.0:1153"
+ttl: 5m
+http: :7070
+resolvers:
+  - name: tunnel
+    type: forward-group
+    rule:
+      - tunnel.example.com
+      - cftunnel.example.com
+    upstreams:
+      - url: https://dns.google/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 8.8.8.8
+            - 8.8.4.4
+      - url: https://cloudflare-dns.com/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 104.16.249.249
+
+  - type: file
+    fileType: host
+    location: system
+    refreshInterval: 10m
+    extraContent: |
+      192.0.2.66 registry.example.lan
+
+  - name: ech
+    type: filter
+    queryType:
+      - HTTPS
+      - AAAA
+    rule:
+      - example.com
+
+  - name: corp
+    type: preloader
+    ttl: 1m
+    url: 192.0.2.80:1053
+    break-on-fail: true
+    rule:
+      - !login.corp.example
+      - mysql.db.example
+      - corp.example
+    config:
+      timeout: 10s
+
+  - type: mock
+    queryType:
+      - A
+    rule:
+      - "!app.example.com"
+      - "!www.example.com"
+      - example.com
+    answer: 192.0.2.230
+
+  - name: dnsmasq
+    type: forward
+    ttl: -1s
+    url: 127.0.0.1:1053
+    break-on-fail: true
+    rule:
+      - lan
+      - local
+      - arpa
+
+  - name: cn-dns
+    type: forward-group
+    upstreams:
+      - url: https://doh.pub/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 120.53.53.53
+            - 1.12.12.12
+      - url: https://dns.alidns.com/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 223.5.5.5
+            - 223.6.6.6
+    rule:
+      - '!cdn.example.com'
+      - aaplimg.com
+      - v2fly:cn
+
+  - name: final-dns
+    type: forward-group
+    ttl: 30s
+    upstreams:
+      - url: https://doh.pub/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 120.53.53.53
+            - 1.12.12.12
+      - url: https://dns.alidns.com/dns-query
+        config:
+          timeout: 3s
+          serverIP:
+            - 223.5.5.5
+            - 223.6.6.6
