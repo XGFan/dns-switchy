@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"dns-switchy/config"
 	"dns-switchy/resolver"
 	"dns-switchy/util"
@@ -550,6 +551,164 @@ func TestDnsMsgHandlerCachesOnlySuccessfulAnsweredResponses(t *testing.T) {
 	}
 }
 
+type nftAddCall struct {
+	set string
+	ips []net.IP
+	ttl time.Duration
+}
+
+type fakeNftWriter struct {
+	calls   []nftAddCall
+	failErr error
+}
+
+func (w *fakeNftWriter) Add(_ context.Context, set string, ips []net.IP, ttl time.Duration) error {
+	cp := make([]net.IP, len(ips))
+	copy(cp, ips)
+	w.calls = append(w.calls, nftAddCall{set: set, ips: cp, ttl: ttl})
+	return w.failErr
+}
+
+// nftAwareResolver 是实现了 NftSetAware 的 testResolver，用于钩子集成测试。
+type nftAwareResolver struct {
+	*testResolver
+	set string
+	ttl time.Duration
+}
+
+func (r *nftAwareResolver) NftSetSpec() (string, time.Duration) {
+	return r.set, r.ttl
+}
+
+func TestResolveOnlyWritesNftSetForAwareResolver(t *testing.T) {
+	query := makeQuery("corp.example.", dns.TypeA)
+	writer := &fakeNftWriter{}
+	server := newServerForTest([]resolver.DnsResolver{&nftAwareResolver{
+		testResolver: &testResolver{
+			ttl:      time.Minute,
+			acceptFn: func(msg *dns.Msg) bool { return true },
+			resolveFn: func(msg *dns.Msg) (*dns.Msg, error) {
+				resp := makeAResponse(msg, "8.212.49.154")
+				// 追加第二条 A + 一条 AAAA，验证多 IP 合并且 AAAA 被忽略。
+				resp.Answer = append(resp.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+					A:   net.ParseIP("47.57.246.209"),
+				}, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
+					AAAA: net.ParseIP("2400:3200::1"),
+				})
+				return resp, nil
+			},
+		},
+		set: "corp4",
+		ttl: time.Hour,
+	}})
+	server.nftWriter = writer
+
+	wire := newCaptureDNSResponseWriter()
+	server.dnsMsgHandler(&DnsWriter{writer: wire, msg: query, start: time.Now().UnixMilli()}, query)
+
+	if len(writer.calls) != 1 {
+		t.Fatalf("nft Add calls = %d, want 1", len(writer.calls))
+	}
+	call := writer.calls[0]
+	if call.set != "corp4" {
+		t.Errorf("nft set = %q, want corp4", call.set)
+	}
+	if call.ttl != time.Hour {
+		t.Errorf("nft ttl = %s, want 1h", call.ttl)
+	}
+	wantIPs := []string{"8.212.49.154", "47.57.246.209"}
+	if len(call.ips) != len(wantIPs) {
+		t.Fatalf("nft ips = %v, want exactly the two A records %v (AAAA must be ignored)", call.ips, wantIPs)
+	}
+	for i, want := range wantIPs {
+		if call.ips[i].String() != want {
+			t.Errorf("nft ips[%d] = %s, want %s", i, call.ips[i], want)
+		}
+	}
+	if wire.msg == nil || wire.msg.Rcode != dns.RcodeSuccess {
+		t.Fatal("expected successful DNS answer returned to client")
+	}
+}
+
+func TestResolveOnlyNoNftSetWriteForUnconfiguredResolver(t *testing.T) {
+	tests := []struct {
+		name string
+		res  resolver.DnsResolver
+	}{
+		{
+			name: "ResolverNotNftSetAware",
+			res: &testResolver{
+				ttl:       time.Minute,
+				acceptFn:  func(msg *dns.Msg) bool { return true },
+				resolveFn: func(msg *dns.Msg) (*dns.Msg, error) { return makeAResponse(msg, "1.2.3.4"), nil },
+			},
+		},
+		{
+			name: "NftSetAwareButEmptySet",
+			res: &nftAwareResolver{
+				testResolver: &testResolver{
+					ttl:       time.Minute,
+					acceptFn:  func(msg *dns.Msg) bool { return true },
+					resolveFn: func(msg *dns.Msg) (*dns.Msg, error) { return makeAResponse(msg, "1.2.3.4"), nil },
+				},
+				set: "", // 未配 nftset
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := makeQuery("public.example.", dns.TypeA)
+			writer := &fakeNftWriter{}
+			server := newServerForTest([]resolver.DnsResolver{tt.res})
+			server.nftWriter = writer
+
+			wire := newCaptureDNSResponseWriter()
+			server.dnsMsgHandler(&DnsWriter{writer: wire, msg: query, start: time.Now().UnixMilli()}, query)
+
+			if len(writer.calls) != 0 {
+				t.Fatalf("nft Add calls = %d, want 0 for unconfigured resolver", len(writer.calls))
+			}
+			if wire.msg == nil || wire.msg.Rcode != dns.RcodeSuccess {
+				t.Fatal("expected successful DNS answer returned to client")
+			}
+		})
+	}
+}
+
+func TestResolveOnlyNftSetWriteFailureIsNonFatal(t *testing.T) {
+	query := makeQuery("corp.example.", dns.TypeA)
+	writer := &fakeNftWriter{failErr: errors.New("set corp4 does not exist")}
+	server := newServerForTest([]resolver.DnsResolver{&nftAwareResolver{
+		testResolver: &testResolver{
+			ttl:       time.Minute,
+			acceptFn:  func(msg *dns.Msg) bool { return true },
+			resolveFn: func(msg *dns.Msg) (*dns.Msg, error) { return makeAResponse(msg, "8.212.49.154"), nil },
+		},
+		set: "corp4",
+		ttl: time.Hour,
+	}})
+	server.nftWriter = writer
+
+	wire := newCaptureDNSResponseWriter()
+	server.dnsMsgHandler(&DnsWriter{writer: wire, msg: query, start: time.Now().UnixMilli()}, query)
+
+	if len(writer.calls) != 1 {
+		t.Fatalf("nft Add calls = %d, want 1 (attempted despite error)", len(writer.calls))
+	}
+	if wire.msg == nil {
+		t.Fatal("expected DNS answer returned to client despite nft write failure")
+	}
+	if wire.msg.Rcode != dns.RcodeSuccess {
+		t.Fatalf("rcode = %s, want %s (nft failure must not affect DNS answer)", dns.RcodeToString[wire.msg.Rcode], dns.RcodeToString[dns.RcodeSuccess])
+	}
+	if len(wire.msg.Answer) == 0 || wire.msg.Answer[0].(*dns.A).A.String() != "8.212.49.154" {
+		t.Fatalf("answer = %v, want the resolved A record despite nft failure", wire.msg.Answer)
+	}
+}
+
 func TestHttpInvalidTypeReturnsBadRequest(t *testing.T) {
 	server := newServerForTest([]resolver.DnsResolver{&testResolver{
 		acceptFn: func(msg *dns.Msg) bool {
@@ -588,7 +747,7 @@ func TestCalcTTLChoosesSmallestPositiveResolverTTL(t *testing.T) {
 func largeReplyFor(msg *dns.Msg) *dns.Msg {
 	resp := new(dns.Msg)
 	resp.SetReply(msg)
-	for i := 0; i < 128; i++ {
+	for range 128 {
 		resp.Answer = append(resp.Answer, &dns.TXT{
 			Hdr: dns.RR_Header{
 				Name:   msg.Question[0].Name,

@@ -3,10 +3,11 @@
 ## 顶层配置
 
 ```yaml
-addr: ":1053"          # 监听地址，UDP，必填
-ttl: 5m                # 全局缓存 TTL，可选
-http: ":8080"          # HTTP API 地址，可选
-resolvers: []          # Resolver 列表，按顺序匹配
+addr: ":1053"            # 监听地址，UDP，必填
+ttl: 5m                  # 全局缓存 TTL，可选
+http: ":8080"            # HTTP API 地址，可选
+nftset_table: "inet fw4" # nftset 写入的目标表/族，可选，默认 inet fw4
+resolvers: []            # Resolver 列表，按顺序匹配
 ```
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -14,6 +15,7 @@ resolvers: []          # Resolver 列表，按顺序匹配
 | `addr` | string | 是 | UDP 监听地址，格式 `:port` 或 `ip:port` |
 | `ttl` | duration | 否 | 全局缓存时间，如 `5m`、`600s`。设为 `-1s` 禁用缓存 |
 | `http` | string | 否 | HTTP API 地址。TCP 格式 `:8080`，Unix socket 格式 `unix:/path/to/sock` |
+| `nftset_table` | string | 否 | nftset 写入的 nftables 表/族，默认 `inet fw4`。详见 [nftset 策略路由](#nftset-策略路由) |
 | `resolvers` | list | 是 | Resolver 数组，按定义顺序依次匹配 |
 
 ## Resolver 链
@@ -74,6 +76,8 @@ resolvers: []          # Resolver 列表，按顺序匹配
 
 多个上游并行查询，取最先返回的结果。每个上游有健康追踪：连续 5 次失败标记为不可用，连续 5 次成功恢复。
 
+可选 `nftset` / `nftset_ttl` 字段把该 resolver 的 A 答案写进 nftables 集合，见 [nftset 策略路由](#nftset-策略路由)。
+
 ### forward-group
 
 与 `forward` 相同，配置多组上游：
@@ -121,6 +125,8 @@ resolvers: []          # Resolver 列表，按顺序匹配
 
 file resolver 只做精确域名匹配（不做子域名匹配），仅响应 A 和 AAAA 查询。
 
+同样支持 `nftset` / `nftset_ttl` 字段，把 host/lease 里的 A 记录写进集合，见 [nftset 策略路由](#nftset-策略路由)。
+
 ### mock
 
 为匹配的请求返回固定 IP。
@@ -148,6 +154,8 @@ file resolver 只做精确域名匹配（不做子域名匹配），仅响应 A 
 ```
 
 preloader 维护独立缓存，不使用全局缓存。适合对延迟敏感的高频域名。
+
+preloader 继承 forward 的全部配置，包括 `nftset` / `nftset_ttl`（见 [nftset 策略路由](#nftset-策略路由)）；由于预加载会按 `ttl` 周期重新解析，每个周期都会刷新集合条目 timeout。
 
 ## 规则语法
 
@@ -222,6 +230,39 @@ rule:
 - Resolver 级缓存：forward 的 `ttl` 字段覆盖全局值。设为 `-1s` 可禁用该 resolver 的缓存
 - preloader 缓存：独立于全局缓存，自动在过期前刷新
 
+## nftset 策略路由
+
+让某个 resolver 在「命中并解析出 A 记录」时，把结果 IP 写进一个 nftables 集合（带 timeout）。路由器侧可用该集合做策略路由（按域名把流量导向特定出口）——单一事实源是 resolver 的域名规则，目标 IP 自动跟随，无需手工维护 IP 列表。
+
+在 `forward`、`forward-group`、`preloader`、`file` 类型的 resolver 上配置：
+
+```yaml
+- type: forward
+  name: corp-dns
+  ttl: 600s
+  url: 192.168.168.21
+  rule:
+    - corp.example
+  nftset: corp4             # A 答案写进的集合名
+  nftset_ttl: 1h            # 集合元素 timeout，须 ≥ 该 resolver 的生效缓存 TTL
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `nftset` | string | 否 | 目标集合名（位于顶层 `nftset_table` 指定的表/族下）。不配则该 resolver 不写集合 |
+| `nftset_ttl` | duration | 否 | 集合元素 timeout，如 `1h`。须 ≥ 该 resolver 的生效缓存 TTL（见下）。`<=0` 时写入不带 timeout |
+
+要点：
+
+- **只有配了 `nftset` 的 resolver 才写集合**；其它 resolver 行为完全不变。
+- **本期仅 IPv4**：只收集应答里的 A 记录写入集合，AAAA 被忽略。
+- **写入时机**：仅在 cache-miss（实际解析）时同步写入，写在返回客户端之前，保证客户端拿到 IP 去连接时集合已就绪。缓存命中不重复写集合——因此要求 `nftset_ttl ≥ 该 resolver 的生效缓存 TTL`（resolver 自身配了正 `ttl` 即用其值，否则回退到顶层 `ttl`）；否则缓存命中期内集合条目可能提前过期、漏标流量。配置加载时若 `nftset_ttl` 短于生效缓存 TTL 会打印告警（非致命）。
+- **写入非致命**：集合不存在或 `nft` 报错只记日志，不影响返回给客户端的 DNS 答案。
+- **集合定义归路由器**：dns-switchy 只往集合里 `add element`，不负责创建集合（`type ipv4_addr; flags timeout;`）、ip rule、路由表等 plumbing。
+- 顶层 `nftset_table` 统一所有 nftset 写入的表/族，默认 `inet fw4`（OpenWrt fw4 的 inet 表）。
+
+> 写入通过外部 `nft add element <table> <set> { <ip> timeout <ttl>s, ... }` 命令完成（同一查询的多个 IP 合并为一条调用），因此运行 dns-switchy 的进程需有调用 `nft` 的权限（OpenWrt 上以 root 运行）。
+
 ## 热重载
 
 DNS-Switchy 通过 fsnotify 监听配置文件变化。修改并保存配置文件后，程序自动：
@@ -273,6 +314,7 @@ API 查询同样**不走缓存**。
 ```yaml
 addr: ":1053"
 ttl: 5m
+nftset_table: "inet fw4"      # 可选，nftset 写入的目标表/族
 resolvers:
   # 过滤 TXT 查询
   - type: filter
@@ -283,6 +325,16 @@ resolvers:
   - type: filter
     rule:
       - ad.google.com
+
+  # corp 域名 → corp DNS，并把解析到的 A 写进 corp4 集合（供路由器策略路由）
+  - type: forward
+    name: corp-dns
+    ttl: 600s
+    url: 192.168.168.21
+    rule:
+      - corp.example
+    nftset: corp4             # 写进 inet fw4 的 corp4 集合
+    nftset_ttl: 1h            # 元素 timeout，须 ≥ 上面的 ttl(600s)
 
   # 本地 hosts
   - type: file

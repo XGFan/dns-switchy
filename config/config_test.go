@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -122,6 +124,136 @@ func Test_parse(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestParseConfigNftSet(t *testing.T) {
+	parsed, err := ParseConfig(strings.NewReader(`
+addr: ":1053"
+ttl: 30s
+nftset_table: "inet myfw"
+resolvers:
+  - type: preloader
+    name: corp
+    ttl: 30s
+    rule:
+      - rccad.net
+    nftset: corp4
+    nftset_ttl: 1h
+    upstreams:
+      - url: 192.168.168.21
+  - type: file
+    fileType: host
+    location: system
+    refreshInterval: 10m
+    nftset: corp4
+    nftset_ttl: 1h
+    extraContent: |
+      1.1.1.1 a.example
+  - type: forward
+    name: public
+    url: 114.114.114.114
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+
+	if parsed.NftSetTable != "inet myfw" {
+		t.Errorf("NftSetTable = %q, want %q", parsed.NftSetTable, "inet myfw")
+	}
+
+	pre, ok := parsed.Resolvers[0].(*PreloaderConfig)
+	if !ok {
+		t.Fatalf("resolver[0] expected *PreloaderConfig, got %T", parsed.Resolvers[0])
+	}
+	if pre.NftSet != "corp4" || pre.NftSetTTL != time.Hour {
+		t.Errorf("preloader nftset = %q ttl = %v, want corp4 / 1h", pre.NftSet, pre.NftSetTTL)
+	}
+
+	file, ok := parsed.Resolvers[1].(*FileConfig)
+	if !ok {
+		t.Fatalf("resolver[1] expected *FileConfig, got %T", parsed.Resolvers[1])
+	}
+	if file.NftSet != "corp4" || file.NftSetTTL != time.Hour {
+		t.Errorf("file nftset = %q ttl = %v, want corp4 / 1h", file.NftSet, file.NftSetTTL)
+	}
+
+	pub, ok := parsed.Resolvers[2].(*ForwardConfig)
+	if !ok {
+		t.Fatalf("resolver[2] expected *ForwardConfig, got %T", parsed.Resolvers[2])
+	}
+	if pub.NftSet != "" || pub.NftSetTTL != 0 {
+		t.Errorf("forward without nftset got nftset = %q ttl = %v, want empty", pub.NftSet, pub.NftSetTTL)
+	}
+}
+
+func TestParseConfigNftSetTableDefaults(t *testing.T) {
+	parsed, err := ParseConfig(strings.NewReader(`
+addr: ":1053"
+resolvers:
+  - type: forward
+    name: public
+    url: 114.114.114.114
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if parsed.NftSetTable != DefaultNftSetTable {
+		t.Errorf("NftSetTable = %q, want default %q", parsed.NftSetTable, DefaultNftSetTable)
+	}
+}
+
+func TestParseConfigNftSetTTLWarnsWhenShorterThanCacheTTL(t *testing.T) {
+	var buf bytes.Buffer
+	restore := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(restore)
+
+	// forward ttl 10m > nftset_ttl 1m → 集合条目可能在缓存命中期内过期 → 告警。
+	_, err := ParseConfig(strings.NewReader(`
+addr: ":1053"
+resolvers:
+  - type: forward
+    name: corp
+    ttl: 10m
+    url: 114.114.114.114
+    rule:
+      - rccad.net
+    nftset: corp4
+    nftset_ttl: 1m
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v (warning must be non-fatal)", err)
+	}
+	if !strings.Contains(buf.String(), "nftset_ttl") {
+		t.Fatalf("expected nftset_ttl warning, got log: %q", buf.String())
+	}
+}
+
+func TestParseConfigNftSetTTLNoWarnWhenLongerThanCacheTTL(t *testing.T) {
+	var buf bytes.Buffer
+	restore := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(restore)
+
+	// nftset_ttl 1h ≥ forward ttl 30s → 无告警。
+	_, err := ParseConfig(strings.NewReader(`
+addr: ":1053"
+resolvers:
+  - type: forward
+    name: corp
+    ttl: 30s
+    url: 114.114.114.114
+    rule:
+      - rccad.net
+    nftset: corp4
+    nftset_ttl: 1h
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if strings.Contains(buf.String(), "nftset_ttl") {
+		t.Fatalf("did not expect nftset_ttl warning, got log: %q", buf.String())
+	}
 }
 
 func TestParseHttpAddr(t *testing.T) {

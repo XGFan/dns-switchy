@@ -10,6 +10,7 @@
 - **v2fly 域名列表**：原生集成 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)，自动下载缓存
 - **本地解析**：hosts 文件、dnsmasq 租约文件
 - **全局缓存**：按 resolver 或全局 TTL 缓存响应
+- **nftset 策略路由**：resolver 解析出的 A 记录可自动写入 nftables 集合（带 timeout），供路由器按域名做策略路由（本期仅 IPv4）
 - **热重载**：修改配置文件后自动重载，无需重启
 - **HTTP API**：可选的 HTTP 查询接口
 - **Web Portal**：内置 Web 管理页面，通过浏览器查询 DNS 解析结果（域名 + 类型 → resolver 名称 + 解析结果），查询不走缓存
@@ -39,15 +40,17 @@ go build -o dns-switchy
 ```yaml
 addr: ":1053"
 ttl: 5m
-http: ":8080"          # 可选，HTTP API + Web Portal
+http: ":8080"            # 可选，HTTP API + Web Portal
+nftset_table: "inet fw4" # 可选，nftset 写入的目标表/族，默认 inet fw4
 resolvers:
   - type: forward
-    name: cn-dns
+    name: corp-dns
     ttl: 600s
     url: 114.114.114.114
     rule:
-      - cn
-      - v2fly:cn
+      - corp.example
+    nftset: corp4          # 可选，把该 resolver 的 A 答案写进 corp4 集合
+    nftset_ttl: 1h         # 集合元素 timeout，须 ≥ 该 resolver 缓存 TTL
   - type: forward
     name: cf-dns
     url: https://cloudflare-dns.com/dns-query

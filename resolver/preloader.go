@@ -22,6 +22,15 @@ func (pl *Preloader) TTL() time.Duration {
 	return -1
 }
 
+// NftSetSpec 显式委托内部 Forward，而非依赖匿名内嵌的方法提升：preloader 是 corp
+// 解析器的常用类型，必须确保钩子能拿到它的 nftset 配置，并对 nil Forward 做防御。
+func (pl *Preloader) NftSetSpec() (set4 string, ttl time.Duration) {
+	if pl.Forward == nil {
+		return "", 0
+	}
+	return pl.Forward.NftSetSpec()
+}
+
 func (pl *Preloader) Close() {
 	pl.closeOnce.Do(func() {
 		if pl.ticker != nil {

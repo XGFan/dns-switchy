@@ -19,6 +19,7 @@ import (
 	"log"
 
 	"dns-switchy/config"
+	"dns-switchy/nftset"
 	"dns-switchy/resolver"
 	"dns-switchy/util"
 
@@ -57,6 +58,7 @@ type DnsSwitchyServer struct {
 	httpServer *http.Server
 	resolvers  []resolver.DnsResolver
 	dnsCache   util.Cache
+	nftWriter  nftset.Writer
 	shutdown   bool
 	wg         sync.WaitGroup
 }
@@ -215,6 +217,7 @@ func (s *DnsSwitchyServer) resolveOnly(resultWriter ResultWriter, msg *dns.Msg) 
 				}
 			} else {
 				if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) > 0 {
+					s.writeNftSet(upstream, resp)
 					s.dnsCache.Set(msg.Question[0], *resp, upstream.TTL())
 				}
 				resultWriter.Success(upstream, resp)
@@ -223,6 +226,35 @@ func (s *DnsSwitchyServer) resolveOnly(resultWriter ResultWriter, msg *dns.Msg) 
 		}
 	}
 	resultWriter.Rcode(dns.RcodeRefused)
+}
+
+// writeNftSet 在「配了 nftset 的 resolver」cache-miss 解析成功后，把答案里的 A 记录 IP
+// 同步写进对应的 nft 集合（本期仅 IPv4，忽略 AAAA）。失败非致命：只记日志，DNS 答案
+// 照常返回。调用点在 dnsCache.Set/Success 之前，确保客户端拿到 IP 去连接时集合已就绪。
+func (s *DnsSwitchyServer) writeNftSet(upstream resolver.DnsResolver, resp *dns.Msg) {
+	if s.nftWriter == nil {
+		return
+	}
+	na, ok := upstream.(resolver.NftSetAware)
+	if !ok {
+		return
+	}
+	set4, ttl := na.NftSetSpec()
+	if set4 == "" {
+		return
+	}
+	ips := make([]net.IP, 0, len(resp.Answer))
+	for _, rr := range resp.Answer {
+		if a, ok := rr.(*dns.A); ok && a.A != nil {
+			ips = append(ips, a.A)
+		}
+	}
+	if len(ips) == 0 {
+		return
+	}
+	if err := s.nftWriter.Add(context.Background(), set4, ips, ttl); err != nil {
+		log.Printf("nftset %s: add %d element(s) fail: %v", set4, len(ips), err)
+	}
 }
 
 func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
@@ -237,6 +269,7 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 		config:    conf,
 		resolvers: resolvers,
 		dnsCache:  util.NewDnsCache(conf.TTL),
+		nftWriter: nftset.NewExecWriter(conf.NftSetTable),
 		wg:        sync.WaitGroup{},
 	}, nil
 }

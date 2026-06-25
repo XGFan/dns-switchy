@@ -1,5 +1,6 @@
 addr: ":1053" #监听端口，目前只支持UDP
 ttl: 5m #全局缓存时间
+#nftset_table: "inet fw4" #可选，nftset 写入的目标表/族，默认 inet fw4
 resolvers:
   - type: filter #过滤器 ，只针对类型
     queryType:
@@ -27,6 +28,16 @@ resolvers:
       1.1.1.1 a.com b.com
       2.2.2.2 c.com
       ::1 d.com
+  # nftset 示例：命中该 resolver 解析出的 A 记录写进 nftables 集合 corp4（带 timeout），
+  # 路由器侧据此做策略路由。仅配了 nftset 的 resolver 才写集合；本期仅 IPv4。详见 USAGE.md。
+  #- name: corp-dns
+  #  type: forward
+  #  ttl: 600s
+  #  url: 192.168.168.21
+  #  rule:
+  #    - corp.example #corp 域名后缀
+  #  nftset: corp4 #A 答案写进 inet fw4 的 corp4 集合
+  #  nftset_ttl: 1h #集合元素 timeout，须 ≥ 上面的 ttl(600s)
   - name: cn-dns
     type: forward
     ttl: 600s #缓存时间10分钟

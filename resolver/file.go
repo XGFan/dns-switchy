@@ -64,10 +64,16 @@ type FileResolver struct {
 	stop          chan struct{}
 	done          chan struct{}
 	closeOnce     sync.Once
+	nftSet        string
+	nftSetTTL     time.Duration
 }
 
 func (fileResolver *FileResolver) String() string {
 	return fmt.Sprintf("FileResolver(%s,%s)", reflect.TypeOf(fileResolver.fileParser), fileResolver.location)
+}
+
+func (fileResolver *FileResolver) NftSetSpec() (set4 string, ttl time.Duration) {
+	return fileResolver.nftSet, fileResolver.nftSetTTL
 }
 
 func (fileResolver *FileResolver) start() {
@@ -217,6 +223,8 @@ func NewFile(config *config.FileConfig) (*FileResolver, error) {
 		fileParser:    fileParser,
 		stop:          make(chan struct{}),
 		done:          make(chan struct{}),
+		nftSet:        config.NftSet,
+		nftSetTTL:     config.NftSetTTL,
 	}
 	resolver.update()
 	go resolver.start()

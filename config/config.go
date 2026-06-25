@@ -201,11 +201,16 @@ func runV2flyAttempt(onRefresh func()) {
 }
 
 type SwitchyConfig struct {
-	Addr      string
-	TTL       time.Duration
-	Http      *HttpConfig
-	Resolvers []ResolverConfig
+	Addr        string
+	TTL         time.Duration
+	Http        *HttpConfig
+	Resolvers   []ResolverConfig
+	NftSetTable string // 统一 nft 表/族，默认 "inet fw4"
 }
+
+// DefaultNftSetTable 是 add element 的目标表/族，对应路由器 fw4 的 inet 表。
+const DefaultNftSetTable = "inet fw4"
+
 type HttpConfig struct {
 	Network string
 	Addr    string
@@ -231,10 +236,11 @@ func (h *HttpConfig) CreateListener() (net.Listener, error) {
 }
 
 type _SwitchyConfig struct {
-	Addr      string                   `yaml:"addr,omitempty"`
-	TTL       time.Duration            `yaml:"ttl,omitempty"`
-	Http      string                   `yaml:"http,omitempty"`
-	Resolvers []map[string]interface{} `yaml:"resolvers,omitempty"`
+	Addr        string                   `yaml:"addr,omitempty"`
+	TTL         time.Duration            `yaml:"ttl,omitempty"`
+	Http        string                   `yaml:"http,omitempty"`
+	Resolvers   []map[string]interface{} `yaml:"resolvers,omitempty"`
+	NftSetTable string                   `yaml:"nftset_table,omitempty"`
 }
 
 type ResolverType string
@@ -261,12 +267,20 @@ func (f FilterConfig) Type() ResolverType {
 	return FILTER
 }
 
+// NftSetConfig 让某个 resolver 在解析成功后把 A 记录写进一个 nftables 集合。
+// 只有显式配了 NftSet 的 resolver 才写集合；未配则行为完全不变。本期仅 IPv4。
+type NftSetConfig struct {
+	NftSet    string        `yaml:"nftset,omitempty"`     // A 记录集合名，如 corp4（本期仅 IPv4）
+	NftSetTTL time.Duration `yaml:"nftset_ttl,omitempty"` // 元素 timeout，须 ≥ 该 resolver 生效缓存 TTL
+}
+
 type FileConfig struct {
 	Location        string            `yaml:"location,omitempty"`
 	RefreshInterval time.Duration     `yaml:"refreshInterval,omitempty"`
 	FileType        string            `yaml:"fileType,omitempty"`
 	ExtraContent    string            `yaml:"extraContent,omitempty"`
 	ExtraConfig     map[string]string `yaml:"extraConfig,omitempty"`
+	NftSetConfig    `yaml:",inline"`
 }
 
 func (h FileConfig) Type() ResolverType {
@@ -280,6 +294,7 @@ type ForwardConfig struct {
 	Rule           []string      `yaml:"rule,omitempty"`
 	UpstreamConfig `yaml:",inline"`
 	Upstreams      []UpstreamConfig `yaml:"upstreams,omitempty"`
+	NftSetConfig   `yaml:",inline"`
 }
 
 type DnsConfig struct {
@@ -356,12 +371,69 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	nftSetTable := strings.TrimSpace(_config.NftSetTable)
+	if nftSetTable == "" {
+		nftSetTable = DefaultNftSetTable
+	}
+	warnNftSetTTL(resolverConfigs, _config.TTL)
 	return &SwitchyConfig{
-		Addr:      _config.Addr,
-		TTL:       _config.TTL,
-		Http:      httpConfig,
-		Resolvers: resolverConfigs,
+		Addr:        _config.Addr,
+		TTL:         _config.TTL,
+		Http:        httpConfig,
+		Resolvers:   resolverConfigs,
+		NftSetTable: nftSetTable,
 	}, nil
+}
+
+// warnNftSetTTL 校验 nftset 元素 timeout 不短于该 resolver 的生效缓存 TTL（计划 §3.2）：
+// 集合只在 cache-miss 时刷新，若 nftset_ttl 短于缓存 TTL，缓存命中期内集合条目可能
+// 提前过期、漏标流量。非致命，仅记日志告警，以免热重载时因配置时序问题中断加载。
+//
+// 生效缓存 TTL 的取值对应 server.go 写缓存时用的 upstream.TTL()：resolver 自身配了
+// 正 TTL 用其值，否则回退到顶层 ttl（globalTTL，<=0 表示交由运行期 calcTTL 推导，无从
+// 在此静态判定，跳过告警）。
+func warnNftSetTTL(resolvers []ResolverConfig, globalTTL time.Duration) {
+	for _, rc := range resolvers {
+		spec, ok := nftSetSpecOf(rc)
+		if !ok || spec.NftSet == "" || spec.NftSetTTL <= 0 {
+			continue
+		}
+		effectiveTTL := globalTTL
+		if own, ok := resolverOwnTTL(rc); ok && own > 0 {
+			effectiveTTL = own
+		}
+		if effectiveTTL > 0 && spec.NftSetTTL < effectiveTTL {
+			log.Printf("nftset %s: nftset_ttl %s shorter than effective cache ttl %s; "+
+				"set elements may expire while answers are still cached", spec.NftSet, spec.NftSetTTL, effectiveTTL)
+		}
+	}
+}
+
+// nftSetSpecOf 提取一个 resolver 配置里的 NftSetConfig（仅 forward/preloader/file 有）。
+func nftSetSpecOf(rc ResolverConfig) (NftSetConfig, bool) {
+	switch c := rc.(type) {
+	case *ForwardConfig:
+		return c.NftSetConfig, true
+	case *PreloaderConfig:
+		return c.NftSetConfig, true
+	case *FileConfig:
+		return c.NftSetConfig, true
+	default:
+		return NftSetConfig{}, false
+	}
+}
+
+// resolverOwnTTL 返回 resolver 自身配置的缓存 TTL（forward/preloader 有 ttl 字段；
+// file 走 NoCache、无自身 TTL，回退到顶层 ttl）。
+func resolverOwnTTL(rc ResolverConfig) (time.Duration, bool) {
+	switch c := rc.(type) {
+	case *ForwardConfig:
+		return c.TTL, true
+	case *PreloaderConfig:
+		return c.TTL, true
+	default:
+		return 0, false
+	}
 }
 
 func ParseRule(rules []string) ([]string, error) {

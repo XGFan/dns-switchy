@@ -24,10 +24,16 @@ type Forward struct {
 	ttl         time.Duration
 	stat        ForwardStat
 	breakOnFail bool
+	nftSet      string
+	nftSetTTL   time.Duration
 }
 
 func (forward *Forward) TTL() time.Duration {
 	return forward.ttl
+}
+
+func (forward *Forward) NftSetSpec() (set4 string, ttl time.Duration) {
+	return forward.nftSet, forward.nftSetTTL
 }
 
 func (forward *Forward) Close() {
@@ -215,6 +221,8 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 		ttl:           config.TTL,
 		stat:          ForwardStat{alive: true},
 		breakOnFail:   config.BreakOnFail,
+		nftSet:        config.NftSet,
+		nftSetTTL:     config.NftSetTTL,
 	}, nil
 }
 
