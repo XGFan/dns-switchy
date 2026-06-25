@@ -25,7 +25,7 @@ func prewarmV2flyCN(t *testing.T) {
 }
 
 func TestLoadDocRoundTripFidelity(t *testing.T) {
-	for _, path := range []string{"../config.yaml", "../router.yaml"} {
+	for _, path := range []string{"../config.yaml", "testdata/router.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			raw, err := os.ReadFile(path)
 			if err != nil {
@@ -83,7 +83,7 @@ func TestLoadDocRoundTripFidelity(t *testing.T) {
 }
 
 func TestLoadDocRoundTripRouterSpecificKeys(t *testing.T) {
-	raw, err := os.ReadFile("../router.yaml")
+	raw, err := os.ReadFile("testdata/router.yaml")
 	if err != nil {
 		t.Fatalf("read router.yaml: %v", err)
 	}

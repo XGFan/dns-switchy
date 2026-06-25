@@ -3,4 +3,4 @@
 /dist/
 local.yaml
 ric.yaml
-router.yaml
+/router.yaml
