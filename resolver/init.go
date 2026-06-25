@@ -11,6 +11,12 @@ func CreateResolvers(conf *config.SwitchyConfig) ([]DnsResolver, error) {
 	for _, resolverConfig := range conf.Resolvers {
 		resolver, err := createResolver(resolverConfig)
 		if err != nil {
+			// Constructing a resolver may already have started goroutines/tickers
+			// (NewPreloader/NewFile). Close everything built so far before bailing
+			// out, otherwise those resources leak.
+			for _, r := range l {
+				r.Close()
+			}
 			return nil, fmt.Errorf("create resolver fail: %w", err)
 		} else {
 			l = append(l, resolver)

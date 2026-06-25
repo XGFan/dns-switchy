@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"encoding/json"
@@ -52,15 +53,105 @@ func printRuntimeInfo() {
 	}
 }
 
+// resolverGen is one generation of the resolver chain. The query path snapshots
+// the active generation once and uses it end-to-end. When a generation is
+// retired (replaced by a swap) it is only closed after the last in-flight query
+// releases it (inUse drops to 0). closeOnce guards against the double-close that
+// would otherwise corrupt non-idempotent Forward.Close (forward.go:38).
+type resolverGen struct {
+	resolvers []resolver.DnsResolver
+	// inUse counts in-flight queries holding this generation. It is incremented
+	// under genMu.RLock (acquire) and decremented/read under genMu.Lock
+	// (release/swap); atomic ops keep the concurrent RLock increments safe.
+	inUse     atomic.Int64
+	retired   bool
+	closeOnce sync.Once
+}
+
+func (g *resolverGen) closeAll() {
+	g.closeOnce.Do(func() {
+		for _, r := range g.resolvers {
+			r.Close()
+		}
+	})
+}
+
 type DnsSwitchyServer struct {
 	config     *config.SwitchyConfig
 	udpServer  *dns.Server
 	httpServer *http.Server
-	resolvers  []resolver.DnsResolver
+	gen        atomic.Pointer[resolverGen]
+	genMu      sync.RWMutex // protects gen.inUse / gen.retired
 	dnsCache   util.Cache
 	nftWriter  nftset.Writer
+	configCtl  *ConfigController // nil when the config editor API is not wired (e.g. unit tests)
 	shutdown   bool
 	wg         sync.WaitGroup
+}
+
+// acquireGen pins the active resolver generation for the duration of a query.
+// The RLock spans "load pointer + inUse++" so the increment lands on the same
+// generation that was loaded, closing the load-then-increment race.
+func (s *DnsSwitchyServer) acquireGen() *resolverGen {
+	s.genMu.RLock()
+	gen := s.gen.Load()
+	if gen != nil {
+		gen.inUse.Add(1)
+	}
+	s.genMu.RUnlock()
+	return gen
+}
+
+// releaseGen drops a query's reference to a generation and closes it if it is
+// both retired and no longer referenced.
+func (s *DnsSwitchyServer) releaseGen(gen *resolverGen) {
+	if gen == nil {
+		return
+	}
+	s.genMu.Lock()
+	remaining := gen.inUse.Add(-1)
+	shouldClose := gen.retired && remaining == 0
+	s.genMu.Unlock()
+	if shouldClose {
+		gen.closeAll()
+	}
+}
+
+// SwapResolvers builds a new resolver chain from conf and atomically installs it
+// as the active generation. The previous generation is retired and closed only
+// once its last in-flight query finishes (RCU). On build failure the running
+// state is left untouched. The DNS cache is cleared after a successful swap so
+// stale routing decisions are not masked by previously cached answers.
+func (s *DnsSwitchyServer) SwapResolvers(conf *config.SwitchyConfig) error {
+	newR, err := resolver.CreateResolvers(conf)
+	if err != nil {
+		// CreateResolvers already closes anything it built before failing.
+		return err
+	}
+	s.installGen(newR)
+	s.config = conf
+	s.dnsCache.Clear()
+	return nil
+}
+
+// installGen atomically installs newR as the active resolver generation, retires
+// the previous one, and closes it immediately if no query holds it (otherwise
+// the last in-flight query closes it on release). It does not touch the cache or
+// s.config — SwapResolvers wraps those concerns.
+func (s *DnsSwitchyServer) installGen(newR []resolver.DnsResolver) {
+	newGen := &resolverGen{resolvers: newR}
+	s.genMu.Lock()
+	old := s.gen.Load()
+	s.gen.Store(newGen)
+	var closeOld bool
+	if old != nil {
+		old.retired = true
+		closeOld = old.inUse.Load() == 0
+	}
+	s.genMu.Unlock()
+	if old != nil && closeOld {
+		old.closeAll()
+	}
 }
 
 func (s *DnsSwitchyServer) Shutdown() {
@@ -71,15 +162,19 @@ func (s *DnsSwitchyServer) Shutdown() {
 	if s.httpServer != nil {
 		_ = s.httpServer.Shutdown(context.Background())
 	}
-	for _, dnsResolver := range s.resolvers {
-		dnsResolver.Close()
+	if gen := s.gen.Load(); gen != nil {
+		gen.closeAll()
 	}
 	s.wg.Wait()
 }
 
 func (s *DnsSwitchyServer) Start() {
 	printRuntimeInfo()
-	log.Printf("Started at %s\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Addr, s.config.Http, s.config.TTL, s.resolvers)
+	var resolvers []resolver.DnsResolver
+	if gen := s.gen.Load(); gen != nil {
+		resolvers = gen.resolvers
+	}
+	log.Printf("Started at %s\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Addr, s.config.Http, s.config.TTL, resolvers)
 	s.udpServer = &dns.Server{
 		Net:       "udp",
 		Addr:      s.config.Addr,
@@ -128,6 +223,8 @@ func (s *DnsSwitchyServer) plainUDPHandler() dns.HandlerFunc {
 func (s *DnsSwitchyServer) httpMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/query", s.apiQueryHandler)
+	mux.HandleFunc("/api/config/validate", s.apiConfigValidateHandler)
+	mux.HandleFunc("/api/config", s.apiConfigHandler)
 	mux.Handle("/", spaHandler())
 	return mux
 }
@@ -202,7 +299,13 @@ func (s *DnsSwitchyServer) resolveOnly(resultWriter ResultWriter, msg *dns.Msg) 
 		resultWriter.Rcode(dns.RcodeFormatError)
 		return
 	}
-	for i, upstream := range s.resolvers {
+	gen := s.acquireGen()
+	defer s.releaseGen(gen)
+	var resolvers []resolver.DnsResolver
+	if gen != nil {
+		resolvers = gen.resolvers
+	}
+	for i, upstream := range resolvers {
 		if upstream.Accept(msg) {
 			resp, err := upstream.Resolve(msg)
 			if err != nil {
@@ -210,7 +313,7 @@ func (s *DnsSwitchyServer) resolveOnly(resultWriter ResultWriter, msg *dns.Msg) 
 					resultWriter.Fail(upstream, err)
 					return
 				}
-				if i < len(s.resolvers)-1 {
+				if i < len(resolvers)-1 {
 					continue
 				} else {
 					resultWriter.Fail(upstream, err)
@@ -265,13 +368,14 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 	if conf.TTL == 0 {
 		conf.TTL = calcTTL(resolvers)
 	}
-	return &DnsSwitchyServer{
+	s := &DnsSwitchyServer{
 		config:    conf,
-		resolvers: resolvers,
 		dnsCache:  util.NewDnsCache(conf.TTL),
 		nftWriter: nftset.NewExecWriter(conf.NftSetTable),
 		wg:        sync.WaitGroup{},
-	}, nil
+	}
+	s.gen.Store(&resolverGen{resolvers: resolvers})
+	return s, nil
 }
 
 func retry(listenFunc func() error) {

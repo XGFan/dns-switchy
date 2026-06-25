@@ -129,24 +129,41 @@ func (stat *ForwardStat) checkStatus(e error) (changed bool, alive bool) {
 	return changed, stat.alive
 }
 
-type MultiUpstream []upstream.Upstream
+// MultiUpstream races several upstreams concurrently (first success wins) and
+// tracks in-flight Exchange goroutines so Close() can wait for losers to exit
+// before tearing down the upstream connections (avoids Exchange-after-close).
+type MultiUpstream struct {
+	upstreams []upstream.Upstream
+	wg        sync.WaitGroup
+}
 
-func (mu MultiUpstream) Close() error {
-	for _, u := range mu {
+func NewMultiUpstream(upstreams []upstream.Upstream) *MultiUpstream {
+	return &MultiUpstream{upstreams: upstreams}
+}
+
+func (mu *MultiUpstream) Close() error {
+	// Wait for all in-flight racing Exchange goroutines (the losers that are
+	// still blocked inside up.Exchange) to return before closing upstreams.
+	mu.wg.Wait()
+	for _, u := range mu.upstreams {
 		_ = u.Close()
 	}
 	return nil
 }
 
-func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
-	if len(mu) == 1 {
-		return mu[0].Exchange(m)
+func (mu *MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
+	if len(mu.upstreams) == 1 {
+		// Single upstream: synchronous, no goroutine, already covered by the
+		// caller's lifecycle (outer RCU). No WaitGroup tracking needed.
+		return mu.upstreams[0].Exchange(m)
 	}
 	result := make(chan interface{})
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
-	for _, u := range mu {
+	for _, u := range mu.upstreams {
+		mu.wg.Add(1)
 		go func(up upstream.Upstream, q *dns.Msg) {
+			defer mu.wg.Done()
 			resp, err := up.Exchange(q.Copy())
 			var r interface{}
 			if err != nil {
@@ -166,7 +183,7 @@ func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
 			}
 		}(u, m)
 	}
-	for range mu {
+	for range mu.upstreams {
 		ret := <-result
 		if r, ok := ret.(*dns.Msg); ok {
 			return r, nil
@@ -175,9 +192,9 @@ func (mu MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
 	return nil, errors.New("all upstreams fail")
 }
 
-func (mu MultiUpstream) Address() string {
+func (mu *MultiUpstream) Address() string {
 	addresses := make([]string, 0)
-	for _, u := range mu {
+	for _, u := range mu.upstreams {
 		addresses = append(addresses, u.Address())
 	}
 	return strings.Join(addresses, ",")
@@ -209,7 +226,7 @@ func NewForward(config *config.ForwardConfig) (*Forward, error) {
 	if len(upstreams) == 0 {
 		err = fmt.Errorf("all url fails")
 	}
-	up := MultiUpstream(upstreams)
+	up := NewMultiUpstream(upstreams)
 
 	if err != nil {
 		return nil, fmt.Errorf("init upstream with %v fail: %w ", config, err)

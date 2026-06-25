@@ -3,28 +3,40 @@
 START=99
 USE_PROCD=1
 
-USER_CONFIG=/etc/dns-switchy/config.yaml
-RUNTIME_CONFIG=/var/run/dns-switchy.yaml
+# Single source of truth: the daemon runs directly against the persistent,
+# user-editable config. Web-portal edits (POST /api/config) and manual edits
+# both land here and survive reboots; the daemon hot-reloads them in-process.
+CONFIG=/etc/dns-switchy/config.yaml
 
-generate_runtime_config() {
-	local http_port="$1"
+# Make sure the config file exists (first install ships one, but be defensive).
+ensure_config() {
+	[ -f "${CONFIG}" ] && return 0
+	mkdir -p /etc/dns-switchy
+	cat > "${CONFIG}" <<-EOF
+		addr: ":1053"
+		ttl: 5m
+		resolvers:
+		  - name: default
+		    type: forward
+		    url: 114.114.114.114
+	EOF
+}
 
-	mkdir -p /var/run
-
-	# UCI http_port overrides yaml top-level http: line; addr: stays in yaml
-	{
-		printf 'http: ":%s"\n' "${http_port}"
-		if [ -f "${USER_CONFIG}" ]; then
-			sed -E '/^http:[[:space:]]/d' "${USER_CONFIG}"
-		else
-			echo 'addr: ":1053"'
-			echo 'ttl: 5m'
-			echo 'resolvers:'
-			echo '  - name: default'
-			echo '    type: forward'
-			echo '    url: 114.114.114.114'
-		fi
-	} > "${RUNTIME_CONFIG}"
+# UCI owns the HTTP port. Sync it into the config file's top-level `http:` line,
+# but only when it actually differs — an unchanged port is a no-op, so normal
+# boots never touch the file (and never trigger a spurious hot-reload).
+ensure_http_port() {
+	local port="$1"
+	local want=":${port}"
+	local cur
+	cur=$(sed -n -r 's|^http:[[:space:]]*"?([^"]*)"?.*|\1|p' "${CONFIG}" 2>/dev/null | head -n1)
+	[ "${cur}" = "${want}" ] && return 0
+	if grep -qE '^http:[[:space:]]' "${CONFIG}" 2>/dev/null; then
+		sed -i -r "s|^http:[[:space:]].*|http: \"${want}\"|" "${CONFIG}"
+	else
+		local tmp="${CONFIG}.tmp.$$"
+		{ printf 'http: "%s"\n' "${want}"; cat "${CONFIG}"; } > "${tmp}" && mv "${tmp}" "${CONFIG}"
+	fi
 }
 
 start_service() {
@@ -37,20 +49,43 @@ start_service() {
 
 	[ "${enabled}" = '1' ] || return 1
 
-	generate_runtime_config "${http_port}"
+	ensure_config
+	ensure_http_port "${http_port}"
 
 	procd_open_instance dns-switchy
-	procd_set_param command /usr/bin/dns-switchy -c "${RUNTIME_CONFIG}"
+	procd_set_param command /usr/bin/dns-switchy -c "${CONFIG}"
 	procd_set_param respawn "${respawn_threshold:-3600}" "${respawn_timeout:-5}" "${respawn_retry:-5}"
 	procd_set_param limits core="unlimited"
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_set_param user root
 	procd_set_param pidfile /var/run/dns-switchy.pid
-	procd_set_param file "${USER_CONFIG}" /etc/config/dns-switchy
+	# Watch ONLY the UCI file. A UCI change re-syncs the port via reload_service.
+	# config.yaml is deliberately NOT watched by procd: the daemon hot-reloads it
+	# in-process, so procd must not restart the service on every web-portal save.
+	procd_set_param file /etc/config/dns-switchy
 	procd_close_instance
 }
 
 service_triggers() {
 	procd_add_reload_trigger 'dns-switchy'
+}
+
+reload_service() {
+	. /lib/functions.sh
+	config_load 'dns-switchy'
+
+	local enabled http_port
+	config_get_bool enabled 'main' 'enabled' 1
+	config_get http_port 'main' 'http_port' '8080'
+
+	if [ "${enabled}" != '1' ]; then
+		stop
+		return 0
+	fi
+
+	ensure_config
+	# Sync the port into the config file; the daemon's own hot-reload rebinds HTTP
+	# without a full service restart. Unchanged port = no write = nothing happens.
+	ensure_http_port "${http_port}"
 }

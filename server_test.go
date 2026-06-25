@@ -94,10 +94,11 @@ func (w *captureDNSResponseWriter) Hijack() {
 }
 
 func newServerForTest(resolvers []resolver.DnsResolver) *DnsSwitchyServer {
-	return &DnsSwitchyServer{
-		resolvers: resolvers,
-		dnsCache:  &util.NoCache{},
+	s := &DnsSwitchyServer{
+		dnsCache: &util.NoCache{},
 	}
+	s.gen.Store(&resolverGen{resolvers: resolvers})
+	return s
 }
 
 type fakeCacheSetCall struct {
@@ -107,12 +108,17 @@ type fakeCacheSetCall struct {
 }
 
 type fakeCache struct {
-	getResult dns.Msg
-	setCalls  []fakeCacheSetCall
+	getResult  dns.Msg
+	setCalls   []fakeCacheSetCall
+	clearCalls int
 }
 
 func (c *fakeCache) Get(_ dns.Question) dns.Msg {
 	return c.getResult
+}
+
+func (c *fakeCache) Clear() {
+	c.clearCalls++
 }
 
 func (c *fakeCache) Set(q dns.Question, msg dns.Msg, ttl time.Duration) {

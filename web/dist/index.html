@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DNS Switchy</title>
+<!-- Alpine.js is vendored locally (web/dist/alpine.min.js) and embedded via go:embed.
+     No external CDN is requested at runtime; the portal works fully offline. -->
+<script defer src="/alpine.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -23,6 +26,7 @@
   --red:#cf222e;
   --red-subtle:rgba(207,34,46,.08);
   --yellow:#9a6700;
+  --yellow-subtle:rgba(154,103,0,.08);
   --radius:8px;
   --radius-lg:12px;
   --shadow:0 1px 3px rgba(31,35,40,.08),0 4px 12px rgba(31,35,40,.04);
@@ -44,11 +48,12 @@ body{
   line-height:1.5;
   -webkit-font-smoothing:antialiased;
 }
+[x-cloak]{display:none!important}
 
 /* ─── Header ─── */
 .header{
   text-align:center;
-  margin-bottom:2rem;
+  margin-bottom:1.5rem;
 }
 .header h1{
   font-size:1.75rem;
@@ -76,6 +81,36 @@ body{
   margin-top:.35rem;
 }
 
+/* ─── Tabs ─── */
+.tabs{
+  display:inline-flex;
+  gap:.25rem;
+  margin-bottom:1.25rem;
+  padding:.25rem;
+  background:var(--surface-raised);
+  border:1px solid var(--border-subtle);
+  border-radius:999px;
+}
+.tab{
+  appearance:none;
+  border:none;
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--sans);
+  font-size:.8125rem;
+  font-weight:600;
+  padding:.4rem 1.1rem;
+  border-radius:999px;
+  cursor:pointer;
+  transition:background var(--transition),color var(--transition);
+}
+.tab:hover{color:var(--text)}
+.tab.active{
+  background:var(--surface);
+  color:var(--accent);
+  box-shadow:0 1px 2px rgba(31,35,40,.08);
+}
+
 /* ─── Card ─── */
 .card{
   width:100%;
@@ -86,6 +121,7 @@ body{
   box-shadow:var(--shadow);
   overflow:hidden;
 }
+.card.wide{max-width:1140px}
 
 /* ─── Query Form ─── */
 .query-form{
@@ -150,6 +186,19 @@ select:focus{border-color:var(--accent)}
 .btn:hover{background:var(--accent);border-color:var(--accent)}
 .btn:active{transform:scale(.97)}
 .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.ghost{
+  background:transparent;
+  color:var(--text);
+  border-color:var(--border);
+}
+.btn.ghost:hover{background:var(--surface-raised);border-color:var(--border)}
+.btn.danger{
+  background:transparent;
+  color:var(--red);
+  border-color:rgba(207,34,46,.3);
+}
+.btn.danger:hover{background:var(--red-subtle);border-color:var(--red)}
+.btn.sm{height:30px;padding:0 .7rem;font-size:.75rem}
 
 /* ─── Results ─── */
 .results{
@@ -286,6 +335,29 @@ select:focus{border-color:var(--accent)}
   color:var(--text-muted);
   word-break:break-all;
 }
+.ok-box{
+  display:flex;
+  align-items:center;
+  gap:.6rem;
+  padding:.75rem 1rem;
+  background:var(--green-subtle);
+  border:1px solid rgba(26,127,55,.25);
+  border-radius:var(--radius);
+  color:var(--green);
+  font-size:.8125rem;
+}
+.warn-box{
+  display:flex;
+  align-items:flex-start;
+  gap:.6rem;
+  padding:.7rem .9rem;
+  background:var(--yellow-subtle);
+  border:1px solid rgba(154,103,0,.25);
+  border-radius:var(--radius);
+  color:var(--yellow);
+  font-size:.75rem;
+  line-height:1.45;
+}
 
 /* No records */
 .no-records{
@@ -295,6 +367,348 @@ select:focus{border-color:var(--accent)}
   font-size:.8125rem;
 }
 
+/* ─────────── Config editor ─────────── */
+.readonly-bar{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:.4rem 1.25rem;
+  padding:.75rem 1.5rem;
+  background:var(--surface-raised);
+  border-bottom:1px solid var(--border-subtle);
+  font-size:.75rem;
+}
+.readonly-bar .ro-item{display:flex;align-items:center;gap:.4rem}
+.readonly-bar .ro-key{color:var(--text-muted)}
+.readonly-bar .ro-val{
+  font-family:var(--mono);
+  font-size:.75rem;
+  color:var(--text);
+  padding:.1rem .45rem;
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:5px;
+}
+.readonly-bar .ro-val.empty{color:var(--text-dim)}
+.readonly-bar .ro-note{
+  margin-left:auto;
+  display:inline-flex;align-items:center;gap:.3rem;
+  color:var(--text-dim);
+  font-size:.6875rem;
+}
+
+.cfg-toolbar{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  padding:.75rem 1.5rem;
+  border-bottom:1px solid var(--border-subtle);
+  flex-wrap:wrap;
+}
+.cfg-toolbar .spacer{flex:1}
+.dirty-dot{
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-size:.75rem;color:var(--yellow);
+}
+.dirty-dot::before{
+  content:"";width:7px;height:7px;border-radius:50%;
+  background:var(--yellow);
+}
+.saved-flag{font-size:.75rem;color:var(--green);display:inline-flex;align-items:center;gap:.35rem}
+
+.master-detail{
+  display:grid;
+  grid-template-columns:300px 1fr;
+  min-height:380px;
+}
+.master{
+  border-right:1px solid var(--border-subtle);
+  display:flex;
+  flex-direction:column;
+}
+.master-head{
+  padding:.75rem 1rem .5rem;
+  font-size:.6875rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--text-muted);
+  font-weight:600;
+}
+.r-list{
+  flex:1;
+  overflow-y:auto;
+  padding:0 .5rem;
+}
+.r-item{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  padding:.5rem .55rem;
+  border-radius:var(--radius);
+  cursor:pointer;
+  border:1px solid transparent;
+  margin-bottom:.2rem;
+  transition:background var(--transition),border-color var(--transition);
+}
+.r-item:hover{background:var(--surface-raised)}
+.r-item.selected{
+  background:var(--accent-subtle);
+  border-color:rgba(56,139,253,.25);
+}
+.r-item.dragging{opacity:.4}
+.r-item.dragover{box-shadow:inset 0 2px 0 var(--accent)}
+.r-handle{
+  color:var(--text-dim);
+  cursor:grab;
+  font-size:.95rem;
+  line-height:1;
+  user-select:none;
+  flex-shrink:0;
+}
+.r-handle:active{cursor:grabbing}
+.r-idx{
+  font-family:var(--mono);
+  font-size:.6875rem;
+  color:var(--text-dim);
+  width:1.1rem;
+  text-align:right;
+  flex-shrink:0;
+}
+.r-label{
+  flex:1;
+  min-width:0;
+  font-size:.8125rem;
+  font-weight:500;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.r-label.unnamed{color:var(--text-muted);font-style:italic}
+.type-badge{
+  flex-shrink:0;
+  font-family:var(--mono);
+  font-size:.625rem;
+  font-weight:600;
+  padding:.1rem .4rem;
+  border-radius:999px;
+  letter-spacing:.01em;
+  border:1px solid transparent;
+}
+.tb-forward{background:var(--accent-subtle);color:var(--accent);border-color:rgba(56,139,253,.2)}
+.tb-forward-group{background:rgba(130,80,223,.1);color:#8250df;border-color:rgba(130,80,223,.22)}
+.tb-preloader{background:rgba(26,127,55,.1);color:var(--green);border-color:rgba(26,127,55,.22)}
+.tb-filter{background:var(--red-subtle);color:var(--red);border-color:rgba(207,34,46,.2)}
+.tb-mock{background:var(--yellow-subtle);color:var(--yellow);border-color:rgba(154,103,0,.22)}
+.tb-file{background:rgba(101,109,118,.12);color:var(--text-muted);border-color:rgba(101,109,118,.2)}
+
+.master-foot{
+  display:flex;
+  gap:.4rem;
+  padding:.6rem .75rem;
+  border-top:1px solid var(--border-subtle);
+  align-items:center;
+}
+.add-wrap{position:relative}
+.add-menu{
+  position:absolute;
+  bottom:calc(100% + 4px);
+  left:0;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-lg);
+  padding:.25rem;
+  min-width:150px;
+  z-index:20;
+}
+.add-menu button{
+  display:flex;
+  width:100%;
+  align-items:center;
+  gap:.5rem;
+  padding:.4rem .55rem;
+  background:transparent;
+  border:none;
+  border-radius:6px;
+  font-family:var(--sans);
+  font-size:.8125rem;
+  color:var(--text);
+  cursor:pointer;
+  text-align:left;
+}
+.add-menu button:hover{background:var(--surface-raised)}
+
+.detail{
+  padding:1.25rem 1.5rem;
+  overflow-y:auto;
+}
+.detail-head{
+  display:flex;
+  align-items:center;
+  gap:.6rem;
+  margin-bottom:1.1rem;
+}
+.detail-head .back-btn{display:none}
+.detail-title{
+  font-size:1rem;
+  font-weight:600;
+  display:flex;align-items:center;gap:.5rem;
+}
+
+.field{margin-bottom:.95rem}
+.field > label{
+  display:block;
+  font-size:.75rem;
+  font-weight:600;
+  color:var(--text-muted);
+  margin-bottom:.35rem;
+}
+.field .hint{color:var(--text-dim);font-weight:400;font-size:.6875rem;margin-left:.4rem}
+.field input[type=text],
+.field textarea{
+  width:100%;
+  min-height:38px;
+  padding:.5rem .7rem;
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:.8125rem;
+  outline:none;
+  transition:border-color var(--transition);
+}
+.field textarea{font-family:var(--mono);line-height:1.5;resize:vertical}
+.field input[type=text]:focus,
+.field textarea:focus{border-color:var(--accent)}
+.field-row{display:flex;gap:.6rem;flex-wrap:wrap}
+.field-row > .field{flex:1;min-width:120px}
+
+.check-line{
+  display:flex;align-items:center;gap:.5rem;
+  font-size:.8125rem;color:var(--text);cursor:pointer;
+}
+.check-line input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+
+.qtype-grid{
+  display:flex;flex-wrap:wrap;gap:.4rem .5rem;
+}
+.qtype-chip{
+  display:inline-flex;align-items:center;gap:.35rem;
+  padding:.25rem .55rem;
+  border:1px solid var(--border);
+  border-radius:999px;
+  font-family:var(--mono);
+  font-size:.6875rem;
+  color:var(--text-muted);
+  cursor:pointer;
+  user-select:none;
+  transition:all var(--transition);
+}
+.qtype-chip input{display:none}
+.qtype-chip.on{
+  background:var(--accent-subtle);
+  border-color:rgba(56,139,253,.35);
+  color:var(--accent);
+  font-weight:600;
+}
+
+/* repeatable rows (rule / serverIP / extraConfig / upstreams) */
+.row-list{display:flex;flex-direction:column;gap:.35rem}
+.line-row{
+  display:flex;align-items:center;gap:.4rem;
+}
+.line-row.dragover{box-shadow:inset 0 2px 0 var(--accent)}
+.line-row.dragging{opacity:.4}
+.line-row .lr-handle{
+  color:var(--text-dim);cursor:grab;font-size:.9rem;line-height:1;
+  user-select:none;flex-shrink:0;width:14px;text-align:center;
+}
+.line-row input{flex:1}
+.line-row .arrows{display:flex;flex-direction:column;gap:1px}
+.icon-btn{
+  appearance:none;border:1px solid var(--border);
+  background:var(--surface);
+  color:var(--text-muted);
+  width:30px;height:30px;
+  border-radius:6px;
+  cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+  transition:all var(--transition);
+  font-size:.85rem;line-height:1;
+}
+.icon-btn:hover{background:var(--surface-raised);color:var(--text)}
+.icon-btn.del:hover{background:var(--red-subtle);color:var(--red);border-color:rgba(207,34,46,.3)}
+.icon-btn.mini{width:22px;height:16px;border-radius:4px;font-size:.6rem}
+.icon-btn:disabled{opacity:.35;cursor:not-allowed}
+.add-line{
+  align-self:flex-start;
+  margin-top:.15rem;
+  background:transparent;
+  border:1px dashed var(--border);
+  color:var(--accent);
+  font-size:.75rem;
+  padding:.3rem .6rem;
+  border-radius:6px;
+  cursor:pointer;
+  font-family:var(--sans);
+  font-weight:500;
+  transition:all var(--transition);
+}
+.add-line:hover{background:var(--accent-subtle);border-color:var(--accent)}
+
+.kv-row{display:flex;gap:.4rem;align-items:center}
+.kv-row input.k{flex:0 0 35%;min-width:90px}
+.kv-row input.v{flex:1}
+
+/* upstream block */
+.upstream-block{
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius);
+  padding:.75rem .8rem;
+  margin-bottom:.5rem;
+  background:var(--surface-raised);
+}
+.upstream-block .ub-head{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:.5rem;
+}
+.upstream-block .ub-title{
+  font-size:.6875rem;font-weight:600;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:.04em;
+}
+
+/* advanced disclosure */
+.adv{margin-top:.5rem;border-top:1px solid var(--border-subtle);padding-top:.85rem}
+.adv > summary{
+  cursor:pointer;
+  font-size:.75rem;
+  font-weight:600;
+  color:var(--accent);
+  list-style:none;
+  user-select:none;
+  display:inline-flex;align-items:center;gap:.35rem;
+  margin-bottom:.6rem;
+}
+.adv > summary::-webkit-details-marker{display:none}
+.adv > summary::before{content:"▸";transition:transform var(--transition);display:inline-block}
+.adv[open] > summary::before{transform:rotate(90deg)}
+
+.detail-actions{
+  display:flex;
+  gap:.5rem;
+  margin-top:1.25rem;
+  padding-top:1rem;
+  border-top:1px solid var(--border-subtle);
+  flex-wrap:wrap;
+}
+.detail-actions .spacer{flex:1}
+
+.cfg-status{padding:0 1.5rem 1.25rem}
+.cfg-status:empty{display:none;padding:0}
+
 /* ─── Footer ─── */
 .footer{
   margin-top:1.5rem;
@@ -303,6 +717,14 @@ select:focus{border-color:var(--accent)}
 }
 
 /* ─── Responsive ─── */
+@media(max-width:640px){
+  .master-detail{grid-template-columns:1fr}
+  .master{border-right:none;border-bottom:1px solid var(--border-subtle)}
+  /* single-column: show list OR detail */
+  .master-detail[data-mobile-view="detail"] .master{display:none}
+  .master-detail[data-mobile-view="list"] .detail{display:none}
+  .detail-head .back-btn{display:inline-flex}
+}
 @media(max-width:520px){
   body{padding:1rem .75rem}
   .query-form{
@@ -311,28 +733,36 @@ select:focus{border-color:var(--accent)}
   }
   .input-wrap{flex-basis:100%}
   select{flex:1}
-  .btn{flex:1}
+  .query-form .btn{flex:1}
   .results{padding:1rem}
   .answer-table{font-size:.75rem}
   .td-name{word-break:break-all}
   .header h1{font-size:1.375rem}
+  .readonly-bar{padding:.7rem 1rem}
+  .detail{padding:1rem}
 }
 </style>
 </head>
-<body>
+<body x-data="portal()" x-cloak>
 
 <div class="header">
   <h1>
     <span class="icon">⚡</span>
     DNS Switchy
   </h1>
-  <p>DNS proxy lookup tool</p>
+  <p>DNS proxy lookup &amp; configuration</p>
 </div>
 
-<div class="card">
+<div class="tabs" role="tablist">
+  <button class="tab" :class="{active: tab==='lookup'}" @click="tab='lookup'" role="tab" id="tab-lookup">Lookup</button>
+  <button class="tab" :class="{active: tab==='config'}" @click="switchToConfig()" role="tab" id="tab-config">Config</button>
+</div>
+
+<!-- ══════════════════ LOOKUP TAB ══════════════════ -->
+<div class="card" x-show="tab==='lookup'">
   <form class="query-form" id="queryForm">
     <div class="input-wrap">
-      <input type="text" id="domain" placeholder="example.com" autocomplete="off" spellcheck="false" autofocus>
+      <input type="text" id="domain" placeholder="example.com" autocomplete="off" spellcheck="false">
     </div>
     <select id="qtype">
       <option value="A" selected>A</option>
@@ -356,8 +786,376 @@ select:focus{border-color:var(--accent)}
   </div>
 </div>
 
+<!-- ══════════════════ CONFIG TAB ══════════════════ -->
+<div class="card wide" x-show="tab==='config'" id="config-card">
+
+  <!-- loading -->
+  <template x-if="loading">
+    <div class="loading" style="min-height:200px"><div class="spinner"></div>Loading configuration…</div>
+  </template>
+
+  <!-- load error -->
+  <template x-if="!loading && loadError">
+    <div style="padding:1.5rem">
+      <div class="error-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+        <div><strong>Failed to load config</strong><code x-text="loadError"></code></div>
+      </div>
+      <button class="btn ghost sm" style="margin-top:1rem" @click="loadConfig()">Retry</button>
+    </div>
+  </template>
+
+  <template x-if="!loading && !loadError">
+    <div>
+      <!-- read-only top bar -->
+      <div class="readonly-bar">
+        <div class="ro-item"><span class="ro-key">addr</span><span class="ro-val" :class="{empty:!ro.addr}" x-text="ro.addr || '—'"></span></div>
+        <div class="ro-item"><span class="ro-key">http</span><span class="ro-val" :class="{empty:!ro.http}" x-text="ro.http || '—'"></span></div>
+        <div class="ro-item"><span class="ro-key">nftset_table</span><span class="ro-val" :class="{empty:!ro.nftset_table}" x-text="ro.nftset_table || '(default)'"></span></div>
+        <div class="ro-item"><span class="ro-key">ttl</span><span class="ro-val" :class="{empty:!ro.ttl}" x-text="ro.ttl || '—'"></span></div>
+        <span class="ro-note" title="Top-level settings are read-only here. Edit the config file directly to change them.">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          只读，改请直接编辑配置文件
+        </span>
+      </div>
+
+      <!-- toolbar: global validate/save + dirty/version state -->
+      <div class="cfg-toolbar">
+        <button class="btn ghost sm" id="btn-validate" @click="doValidate()" :disabled="busy">Validate</button>
+        <button class="btn sm" id="btn-save" @click="doSave()" :disabled="busy || !dirty">
+          <span x-show="!busy">Save</span><span x-show="busy">Saving…</span>
+        </button>
+        <span class="dirty-dot" x-show="dirty && !justSaved" id="dirty-indicator">Unsaved changes</span>
+        <span class="saved-flag" x-show="justSaved">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          Saved
+        </span>
+        <div class="spacer"></div>
+        <span style="font-size:.6875rem;color:var(--text-dim)">version <code style="font-family:var(--mono)" x-text="(version||'').slice(0,8) || '—'"></code></span>
+      </div>
+
+      <!-- master-detail -->
+      <div class="master-detail" :data-mobile-view="mobileView" id="master-detail">
+
+        <!-- LEFT: ordered resolver list -->
+        <div class="master">
+          <div class="master-head">Resolvers <span style="color:var(--text-dim);text-transform:none;letter-spacing:0">· order = priority</span></div>
+          <div class="r-list" id="resolver-list">
+            <template x-if="resolvers.length===0">
+              <div class="empty" style="padding:1.5rem 1rem">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                <span>No resolvers yet</span>
+                <span style="font-size:.6875rem">Use <strong>+ Add</strong> below to create one</span>
+              </div>
+            </template>
+            <template x-for="(r, i) in resolvers" :key="r.__id">
+              <div class="r-item"
+                   :class="{selected: i===selected, dragging: dragIndex===i, dragover: dragOverIndex===i}"
+                   :data-idx="i"
+                   @click="selectResolver(i)"
+                   draggable="true"
+                   @dragstart="onDragStart(i, $event)"
+                   @dragover.prevent="dragOverIndex=i"
+                   @dragleave="dragOverIndex===i && (dragOverIndex=-1)"
+                   @drop.prevent="onDrop(i)"
+                   @dragend="onDragEnd()">
+                <span class="r-handle" title="Drag to reorder">∷</span>
+                <span class="r-idx" x-text="i+1"></span>
+                <span class="r-label" :class="{unnamed: !r.name}" x-text="r.name || ('(' + (r.type||'?') + ')')"></span>
+                <span class="type-badge" :class="'tb-' + (r.type||'unknown')" x-text="r.type || '?'"></span>
+              </div>
+            </template>
+          </div>
+          <div class="master-foot">
+            <div class="add-wrap" @click.outside="addOpen=false">
+              <button class="btn ghost sm" id="btn-add" @click="addOpen=!addOpen">+ Add ▾</button>
+              <div class="add-menu" x-show="addOpen" x-cloak>
+                <template x-for="t in TYPES" :key="t">
+                  <button @click="addResolver(t)">
+                    <span class="type-badge" :class="'tb-'+t" x-text="t"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+            <div class="spacer" style="flex:1"></div>
+            <button class="icon-btn" id="btn-up" title="Move up" @click="moveResolver(selected,-1)" :disabled="selected<0 || selected===0">↑</button>
+            <button class="icon-btn" id="btn-down" title="Move down" @click="moveResolver(selected,1)" :disabled="selected<0 || selected===resolvers.length-1">↓</button>
+          </div>
+        </div>
+
+        <!-- RIGHT: per-type form -->
+        <div class="detail" id="detail-pane">
+          <template x-if="selected<0 || !cur">
+            <div class="empty" style="padding:3rem 1rem">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+              <span x-text="resolvers.length ? 'Select a resolver to edit' : 'Add a resolver to begin'"></span>
+            </div>
+          </template>
+
+          <template x-if="selected>=0 && cur">
+            <div>
+              <div class="detail-head">
+                <button class="btn ghost sm back-btn" @click="mobileView='list'">← Back</button>
+                <span class="detail-title">
+                  <span x-text="cur.name || '(unnamed)'"></span>
+                  <span class="type-badge" :class="'tb-'+cur.type" x-text="cur.type"></span>
+                </span>
+              </div>
+
+              <!-- name (all but file has no name in schema, but keep editable for all) -->
+              <div class="field" x-show="cur.type!=='file'">
+                <label>name <span class="hint">optional label</span></label>
+                <input type="text" data-f="name" :value="cur.name||''" @input="setField('name', $event.target.value)" placeholder="(unnamed)">
+              </div>
+
+              <!-- ttl (forward / forward-group / preloader) -->
+              <div class="field" x-show="['forward','forward-group','preloader'].includes(cur.type)">
+                <label>ttl <span class="hint">cache duration, e.g. 600s / 5m; blank = global</span></label>
+                <input type="text" data-f="ttl" :value="cur.ttl||''" @input="setOptStr('ttl', $event.target.value)" placeholder="(use global ttl)">
+              </div>
+
+              <!-- break-on-fail (forward / forward-group / preloader) -->
+              <div class="field" x-show="['forward','forward-group','preloader'].includes(cur.type)">
+                <label class="check-line">
+                  <input type="checkbox" data-f="break-on-fail" :checked="!!cur['break-on-fail']" @change="setBool('break-on-fail', $event.target.checked)">
+                  break-on-fail <span class="hint">stop resolver chain on failure</span>
+                </label>
+              </div>
+
+              <!-- url (forward / preloader) -->
+              <div class="field" x-show="cur.type==='forward' || cur.type==='preloader'">
+                <label>url <span class="hint">upstream: IP, IP:port, https://… (DoH), tls://… (DoT)</span></label>
+                <input type="text" data-f="url" :value="cur.url||''" @input="setField('url', $event.target.value)" placeholder="114.114.114.114">
+              </div>
+
+              <!-- upstreams[] (forward-group) -->
+              <div class="field" x-show="cur.type==='forward-group'">
+                <label>upstreams <span class="hint">raced concurrently — first success wins</span></label>
+                <template x-for="(u, ui) in (cur.upstreams||[])" :key="ui">
+                  <div class="upstream-block">
+                    <div class="ub-head">
+                      <span class="ub-title" x-text="'upstream ' + (ui+1)"></span>
+                      <button class="icon-btn del sm" style="width:26px;height:24px" title="Remove upstream" @click="removeUpstream(ui)">✕</button>
+                    </div>
+                    <div class="field" style="margin-bottom:.6rem">
+                      <label style="font-size:.6875rem">url</label>
+                      <input type="text" :value="u.url||''" @input="setUpstreamUrl(ui, $event.target.value)" placeholder="https://dns.google/dns-query">
+                    </div>
+                    <div class="field" style="margin-bottom:.6rem">
+                      <label style="font-size:.6875rem">config.timeout</label>
+                      <input type="text" :value="(u.config&&u.config.timeout)||''" @input="setUpstreamTimeout(ui, $event.target.value)" placeholder="3s">
+                    </div>
+                    <div class="field" style="margin-bottom:0">
+                      <label style="font-size:.6875rem">config.serverIP <span class="hint">bootstrap IPs</span></label>
+                      <div class="row-list">
+                        <template x-for="(ip, ipi) in upstreamServerIPs(ui)" :key="ipi">
+                          <div class="line-row">
+                            <input type="text" :value="ip" @input="setUpstreamServerIP(ui, ipi, $event.target.value)" placeholder="8.8.8.8">
+                            <button class="icon-btn del" title="Remove" @click="removeUpstreamServerIP(ui, ipi)">✕</button>
+                          </div>
+                        </template>
+                        <button class="add-line" @click="addUpstreamServerIP(ui)">+ serverIP</button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <button class="add-line" @click="addUpstream()">+ 添加 upstream</button>
+              </div>
+
+              <!-- RULE: per-line elements (forward / forward-group / preloader / filter / mock) -->
+              <div class="field" x-show="['forward','forward-group','preloader','filter','mock'].includes(cur.type)">
+                <label>rule <span class="hint">one per line · supports v2fly:cn, include:…, !blacklist, keyword:, regexp:</span></label>
+                <div class="row-list" id="rule-rows">
+                  <template x-if="!(cur.rule&&cur.rule.length)">
+                    <div style="font-size:.75rem;color:var(--text-dim);padding:.2rem 0">No rules — matches all queries of this resolver's scope.</div>
+                  </template>
+                  <template x-for="(rl, ri) in (cur.rule||[])" :key="ri">
+                    <div class="line-row"
+                         :class="{dragging: ruleDrag===ri, dragover: ruleDragOver===ri}"
+                         @dragover.prevent="ruleDragOver=ri"
+                         @dragleave="ruleDragOver===ri && (ruleDragOver=-1)"
+                         @drop.prevent="onRuleDrop(ri)">
+                      <span class="lr-handle" draggable="true" title="Drag to reorder"
+                            @dragstart="ruleDrag=ri; $event.dataTransfer.effectAllowed='move'"
+                            @dragend="ruleDrag=-1; ruleDragOver=-1">∷</span>
+                      <input type="text" class="rule-input" :value="rl" @input="setRule(ri, $event.target.value)" placeholder="example.com / v2fly:cn / !blocked.com" spellcheck="false">
+                      <div class="arrows">
+                        <button class="icon-btn mini" title="Up" @click="moveRule(ri,-1)" :disabled="ri===0">↑</button>
+                        <button class="icon-btn mini" title="Down" @click="moveRule(ri,1)" :disabled="ri===((cur.rule||[]).length-1)">↓</button>
+                      </div>
+                      <button class="icon-btn del" title="Remove rule" @click="removeRule(ri)">✕</button>
+                    </div>
+                  </template>
+                  <button class="add-line" id="btn-add-rule" @click="addRule()">+ 添加规则</button>
+                </div>
+              </div>
+
+              <!-- queryType checkboxes (filter / mock) -->
+              <div class="field" x-show="cur.type==='filter' || cur.type==='mock'">
+                <label>queryType <span class="hint">match these record types (empty = all)</span></label>
+                <div class="qtype-grid">
+                  <template x-for="qt in QTYPES" :key="qt">
+                    <label class="qtype-chip" :class="{on: hasQType(qt)}">
+                      <input type="checkbox" :checked="hasQType(qt)" @change="toggleQType(qt)">
+                      <span x-text="qt"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <!-- answer (mock) -->
+              <div class="field" x-show="cur.type==='mock'">
+                <label>answer <span class="hint">fixed IP returned for matches</span></label>
+                <input type="text" data-f="answer" :value="cur.answer||''" @input="setField('answer', $event.target.value)" placeholder="192.168.1.1">
+              </div>
+
+              <!-- ════ FILE fields ════ -->
+              <template x-if="cur.type==='file'">
+                <div>
+                  <div class="field-row">
+                    <div class="field">
+                      <label>fileType</label>
+                      <select data-f="fileType" style="width:100%" :value="cur.fileType||'host'" @change="setField('fileType', $event.target.value)">
+                        <option value="host">host</option>
+                        <option value="lease">lease</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>refreshInterval</label>
+                      <input type="text" data-f="refreshInterval" :value="cur.refreshInterval||''" @input="setOptStr('refreshInterval', $event.target.value)" placeholder="10m">
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>location <span class="hint" style="color:var(--yellow)">⚠ path is validated on save</span></label>
+                    <input type="text" data-f="location" :value="cur.location||''" @input="setField('location', $event.target.value)" placeholder="/tmp/dhcp.leases or system">
+                    <div class="warn-box" style="margin-top:.4rem" x-show="(cur.location||'')==='system'">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                      <span><strong>system</strong> = read the OS hosts file. Non-<code>system</code> paths must exist on disk or the save is rejected (409).</span>
+                    </div>
+                  </div>
+
+                  <details class="adv">
+                    <summary>Advanced · extraContent / extraConfig</summary>
+                    <div class="field">
+                      <label>extraContent <span class="hint">inline host/lease lines</span></label>
+                      <textarea rows="4" data-f="extraContent" :value="cur.extraContent||''" @input="setOptStr('extraContent', $event.target.value)" placeholder="1.1.1.1 a.com b.com"></textarea>
+                    </div>
+                    <div class="field">
+                      <label>extraConfig <span class="hint">key → value (e.g. domain → lan)</span></label>
+                      <div class="row-list">
+                        <template x-for="(kv, ki) in extraConfigRows" :key="ki">
+                          <div class="kv-row">
+                            <input type="text" class="k" :value="kv.k" @input="setExtraConfigKey(ki, $event.target.value)" placeholder="key" spellcheck="false">
+                            <input type="text" class="v" :value="kv.v" @input="setExtraConfigVal(ki, $event.target.value)" placeholder="value" spellcheck="false">
+                            <button class="icon-btn del" title="Remove" @click="removeExtraConfig(ki)">✕</button>
+                          </div>
+                        </template>
+                        <button class="add-line" @click="addExtraConfig()">+ key/value</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </template>
+
+              <!-- ════ Advanced: config.timeout / serverIP / nftset (forward / preloader) ════ -->
+              <template x-if="cur.type==='forward' || cur.type==='preloader'">
+                <details class="adv">
+                  <summary>Advanced · timeout / serverIP / nftset</summary>
+                  <div class="field">
+                    <label>config.timeout</label>
+                    <input type="text" :value="(cur.config&&cur.config.timeout)||''" @input="setConfigTimeout($event.target.value)" placeholder="3s">
+                  </div>
+                  <div class="field">
+                    <label>config.serverIP <span class="hint">bootstrap IPs for DoH/DoT</span></label>
+                    <div class="row-list">
+                      <template x-for="(ip, ii) in configServerIPs()" :key="ii">
+                        <div class="line-row">
+                          <input type="text" :value="ip" @input="setConfigServerIP(ii, $event.target.value)" placeholder="8.8.8.8">
+                          <button class="icon-btn del" title="Remove" @click="removeConfigServerIP(ii)">✕</button>
+                        </div>
+                      </template>
+                      <button class="add-line" @click="addConfigServerIP()">+ serverIP</button>
+                    </div>
+                  </div>
+                  <div class="field-row">
+                    <div class="field">
+                      <label>nftset <span class="hint">nftables set name</span></label>
+                      <input type="text" :value="cur.nftset||''" @input="setOptStr('nftset', $event.target.value)" placeholder="corp4">
+                    </div>
+                    <div class="field">
+                      <label>nftset_ttl</label>
+                      <input type="text" :value="cur.nftset_ttl||''" @input="setOptStr('nftset_ttl', $event.target.value)" placeholder="1h">
+                    </div>
+                  </div>
+                </details>
+              </template>
+
+              <!-- nftset for forward-group & file too -->
+              <template x-if="cur.type==='forward-group' || cur.type==='file'">
+                <details class="adv">
+                  <summary>Advanced · nftset</summary>
+                  <div class="field-row">
+                    <div class="field">
+                      <label>nftset <span class="hint">nftables set name</span></label>
+                      <input type="text" :value="cur.nftset||''" @input="setOptStr('nftset', $event.target.value)" placeholder="corp4">
+                    </div>
+                    <div class="field">
+                      <label>nftset_ttl</label>
+                      <input type="text" :value="cur.nftset_ttl||''" @input="setOptStr('nftset_ttl', $event.target.value)" placeholder="1h">
+                    </div>
+                  </div>
+                </details>
+              </template>
+
+              <div class="detail-actions">
+                <button class="btn danger sm" id="btn-delete" @click="deleteResolver()">Delete resolver</button>
+                <div class="spacer"></div>
+                <button class="btn ghost sm" @click="doValidate()" :disabled="busy">Validate</button>
+                <button class="btn sm" @click="doSave()" :disabled="busy || !dirty">Save</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- status: validate/save result, version conflict -->
+      <div class="cfg-status">
+        <template x-if="status.kind==='ok'">
+          <div class="ok-box" id="status-ok">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span x-text="status.msg"></span>
+          </div>
+        </template>
+        <template x-if="status.kind==='error'">
+          <div class="error-box" id="status-error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+            <div>
+              <strong x-text="status.msg"></strong>
+              <code x-show="status.detail" x-text="status.detail"></code>
+            </div>
+          </div>
+        </template>
+        <template x-if="status.kind==='conflict'">
+          <div class="error-box" id="status-conflict" style="flex-direction:column;align-items:stretch;gap:.7rem">
+            <div style="display:flex;align-items:flex-start;gap:.75rem">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+              <div>
+                <strong>配置已在别处变更</strong>
+                <code>The configuration was modified elsewhere since you loaded it. Reload to discard your local changes.</code>
+              </div>
+            </div>
+            <button class="btn danger sm" id="btn-reload-conflict" style="align-self:flex-start" @click="reloadDiscard()">重新加载（丢弃本地改动）</button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+</div>
+
 <div class="footer">DNS Switchy — resolver proxy</div>
 
+<!-- ───────────── Lookup logic (unchanged behavior) ───────────── -->
 <script>
 (function(){
   var form = document.getElementById('queryForm');
@@ -503,6 +1301,453 @@ select:focus{border-color:var(--accent)}
     doLookup();
   });
 })();
+</script>
+
+<!-- ───────────── Config editor (Alpine) ───────────── -->
+<script>
+var __rid = 0;
+function portal(){
+  return {
+    tab: 'lookup',
+
+    // ── config state ──
+    TYPES: ['forward','forward-group','preloader','filter','mock','file'],
+    QTYPES: ['A','AAAA','CNAME','MX','TXT','NS','SOA','PTR','SRV','CAA','HTTPS'],
+
+    loading: false,
+    loadError: '',
+    loaded: false,        // has config ever been fetched
+    ro: {},               // read-only top-level fields
+    resolvers: [],        // editable resolver objects (the GET objects themselves, + __id)
+    version: '',
+    selected: -1,
+    dirty: false,
+    busy: false,
+    justSaved: false,
+    addOpen: false,
+    mobileView: 'list',   // 'list' | 'detail' (<640px)
+
+    // drag state (resolver list)
+    dragIndex: -1,
+    dragOverIndex: -1,
+    // drag state (rule rows)
+    ruleDrag: -1,
+    ruleDragOver: -1,
+
+    status: { kind:'', msg:'', detail:'' },
+
+    get cur(){
+      return (this.selected>=0 && this.selected<this.resolvers.length) ? this.resolvers[this.selected] : null;
+    },
+
+    // ════ tab switch ════
+    switchToConfig(){
+      this.tab = 'config';
+      if(!this.loaded && !this.loading) this.loadConfig();
+    },
+
+    // ════ load ════
+    loadConfig(){
+      this.loading = true;
+      this.loadError = '';
+      this.clearStatus();
+      fetch('/api/config').then(function(r){
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then((data)=>{
+        this.applyLoaded(data);
+        this.loading = false;
+        this.loaded = true;
+      }).catch((err)=>{
+        this.loadError = err.message || String(err);
+        this.loading = false;
+      });
+    },
+
+    applyLoaded(data){
+      var cfg = data.config || {};
+      this.version = data.version || '';
+      this.ro = {
+        addr: cfg.addr || '',
+        http: cfg.http || '',
+        nftset_table: cfg.nftset_table || '',
+        ttl: cfg.ttl || ''
+      };
+      var list = Array.isArray(cfg.resolvers) ? cfg.resolvers : [];
+      // tag each resolver with a stable __id for x-for :key (kept out of payload on save)
+      list.forEach((r)=>{ r.__id = ++__rid; });
+      this.resolvers = list;
+      this.selected = list.length ? 0 : -1;
+      this.dirty = false;
+      this.justSaved = false;
+    },
+
+    // ════ selection ════
+    selectResolver(i){
+      this.selected = i;
+      this.mobileView = 'detail';
+    },
+
+    markDirty(){
+      this.dirty = true;
+      this.justSaved = false;
+      // a structural/content change invalidates any "conflict" banner reasoning,
+      // but keep validate/error visible; clear only the transient ok flag
+      if(this.status.kind==='ok') this.clearStatus();
+    },
+
+    // ════ scalar field setters (in-place; preserve unknown keys) ════
+    setField(key, val){ if(this.cur){ this.cur[key] = val; this.markDirty(); } },
+    setBool(key, val){ if(this.cur){ this.cur[key] = val; this.markDirty(); } },
+    // optional string: empty string removes the key so we don't emit empty scalars
+    setOptStr(key, val){
+      if(!this.cur) return;
+      if(val === '' || val == null){ delete this.cur[key]; }
+      else { this.cur[key] = val; }
+      this.markDirty();
+    },
+
+    // ════ rule rows ════
+    addRule(){ if(!this.cur) return; if(!Array.isArray(this.cur.rule)) this.cur.rule = []; this.cur.rule.push(''); this.markDirty(); },
+    setRule(i, val){ if(this.cur && this.cur.rule){ this.cur.rule[i] = val; this.markDirty(); } },
+    removeRule(i){ if(this.cur && this.cur.rule){ this.cur.rule.splice(i,1); this.markDirty(); } },
+    moveRule(i, dir){
+      if(!this.cur || !this.cur.rule) return;
+      var j = i + dir;
+      if(j<0 || j>=this.cur.rule.length) return;
+      var a = this.cur.rule;
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+      this.markDirty();
+    },
+    onRuleDrop(target){
+      if(this.ruleDrag<0 || !this.cur || !this.cur.rule){ this.ruleDrag=-1; this.ruleDragOver=-1; return; }
+      var from = this.ruleDrag;
+      if(from!==target){
+        var a = this.cur.rule;
+        var moved = a.splice(from,1)[0];
+        a.splice(target,0,moved);
+        this.markDirty();
+      }
+      this.ruleDrag=-1; this.ruleDragOver=-1;
+    },
+
+    // ════ queryType checkboxes ════
+    hasQType(qt){ return this.cur && Array.isArray(this.cur.queryType) && this.cur.queryType.includes(qt); },
+    toggleQType(qt){
+      if(!this.cur) return;
+      if(!Array.isArray(this.cur.queryType)) this.cur.queryType = [];
+      var arr = this.cur.queryType;
+      var idx = arr.indexOf(qt);
+      if(idx>=0) arr.splice(idx,1); else arr.push(qt);
+      this.markDirty();
+    },
+
+    // ════ config.timeout / serverIP (forward / preloader) ════
+    setConfigTimeout(val){
+      if(!this.cur) return;
+      if(!this.cur.config) this.cur.config = {};
+      if(val===''){ delete this.cur.config.timeout; }
+      else { this.cur.config.timeout = val; }
+      this.pruneConfig(this.cur);
+      this.markDirty();
+    },
+    configServerIPs(){
+      if(this.cur && this.cur.config && Array.isArray(this.cur.config.serverIP)) return this.cur.config.serverIP;
+      return [];
+    },
+    addConfigServerIP(){
+      if(!this.cur) return;
+      if(!this.cur.config) this.cur.config = {};
+      if(!Array.isArray(this.cur.config.serverIP)) this.cur.config.serverIP = [];
+      this.cur.config.serverIP.push('');
+      this.markDirty();
+    },
+    setConfigServerIP(i, val){
+      if(this.cur && this.cur.config && this.cur.config.serverIP){ this.cur.config.serverIP[i] = val; this.markDirty(); }
+    },
+    removeConfigServerIP(i){
+      if(this.cur && this.cur.config && this.cur.config.serverIP){
+        this.cur.config.serverIP.splice(i,1);
+        if(this.cur.config.serverIP.length===0) delete this.cur.config.serverIP;
+        this.pruneConfig(this.cur);
+        this.markDirty();
+      }
+    },
+    pruneConfig(r){ if(r.config && Object.keys(r.config).length===0) delete r.config; },
+
+    // ════ upstreams[] (forward-group) ════
+    addUpstream(){
+      if(!this.cur) return;
+      if(!Array.isArray(this.cur.upstreams)) this.cur.upstreams = [];
+      this.cur.upstreams.push({ url:'', config:{ timeout:'' } });
+      this.markDirty();
+    },
+    removeUpstream(i){ if(this.cur && this.cur.upstreams){ this.cur.upstreams.splice(i,1); this.markDirty(); } },
+    setUpstreamUrl(i, val){ if(this.cur && this.cur.upstreams && this.cur.upstreams[i]){ this.cur.upstreams[i].url = val; this.markDirty(); } },
+    setUpstreamTimeout(i, val){
+      var u = this.cur && this.cur.upstreams && this.cur.upstreams[i];
+      if(!u) return;
+      if(!u.config) u.config = {};
+      if(val===''){ delete u.config.timeout; } else { u.config.timeout = val; }
+      if(u.config && Object.keys(u.config).length===0) delete u.config;
+      this.markDirty();
+    },
+    upstreamServerIPs(i){
+      var u = this.cur && this.cur.upstreams && this.cur.upstreams[i];
+      if(u && u.config && Array.isArray(u.config.serverIP)) return u.config.serverIP;
+      return [];
+    },
+    addUpstreamServerIP(i){
+      var u = this.cur && this.cur.upstreams && this.cur.upstreams[i];
+      if(!u) return;
+      if(!u.config) u.config = {};
+      if(!Array.isArray(u.config.serverIP)) u.config.serverIP = [];
+      u.config.serverIP.push('');
+      this.markDirty();
+    },
+    setUpstreamServerIP(i, ipi, val){
+      var u = this.cur && this.cur.upstreams && this.cur.upstreams[i];
+      if(u && u.config && u.config.serverIP){ u.config.serverIP[ipi] = val; this.markDirty(); }
+    },
+    removeUpstreamServerIP(i, ipi){
+      var u = this.cur && this.cur.upstreams && this.cur.upstreams[i];
+      if(u && u.config && u.config.serverIP){
+        u.config.serverIP.splice(ipi,1);
+        if(u.config.serverIP.length===0) delete u.config.serverIP;
+        if(u.config && Object.keys(u.config).length===0) delete u.config;
+        this.markDirty();
+      }
+    },
+
+    // ════ file.extraConfig (key/value) ════
+    // mirror object <-> ordered rows so a key can be edited without losing position
+    get extraConfigRows(){
+      var r = this.cur;
+      if(!r || !r.extraConfig || typeof r.extraConfig!=='object') return [];
+      return Object.keys(r.extraConfig).map((k)=>({ k:k, v:r.extraConfig[k] }));
+    },
+    rebuildExtraConfig(rows){
+      var obj = {};
+      rows.forEach((row)=>{ if(row.k!=='') obj[row.k] = row.v; });
+      if(Object.keys(obj).length) this.cur.extraConfig = obj; else delete this.cur.extraConfig;
+    },
+    addExtraConfig(){
+      if(!this.cur) return;
+      var rows = this.extraConfigRows;
+      rows.push({ k:'', v:'' });
+      // can't store empty-key rows in object; keep a transient placeholder until a key is typed
+      // represent by setting a unique temp key that we strip on save
+      this.cur.extraConfig = this.cur.extraConfig || {};
+      this.cur.extraConfig['__new'+(++__rid)] = '';
+      this.markDirty();
+    },
+    setExtraConfigKey(i, val){
+      if(!this.cur) return;
+      var rows = this.extraConfigRows;
+      if(i>=rows.length) return;
+      rows[i].k = val;
+      this.rebuildExtraConfig(rows);
+      this.markDirty();
+    },
+    setExtraConfigVal(i, val){
+      if(!this.cur) return;
+      var rows = this.extraConfigRows;
+      if(i>=rows.length) return;
+      rows[i].v = val;
+      this.rebuildExtraConfig(rows);
+      this.markDirty();
+    },
+    removeExtraConfig(i){
+      if(!this.cur) return;
+      var rows = this.extraConfigRows;
+      rows.splice(i,1);
+      this.rebuildExtraConfig(rows);
+      this.markDirty();
+    },
+
+    // ════ add / delete resolver ════
+    addResolver(type){
+      this.addOpen = false;
+      var r = this.blankResolver(type);
+      r.__id = ++__rid;
+      this.resolvers.push(r);
+      this.selected = this.resolvers.length - 1;
+      this.mobileView = 'detail';
+      this.markDirty();
+    },
+    blankResolver(type){
+      switch(type){
+        case 'forward':       return { name:'', type:'forward', url:'', rule:[] };
+        case 'forward-group': return { name:'', type:'forward-group', rule:[], upstreams:[{ url:'', config:{ timeout:'' } }] };
+        case 'preloader':     return { name:'', type:'preloader', url:'', rule:[] };
+        case 'filter':        return { name:'', type:'filter', queryType:[], rule:[] };
+        case 'mock':          return { name:'', type:'mock', queryType:['A'], rule:[], answer:'' };
+        case 'file':          return { type:'file', fileType:'host', location:'', refreshInterval:'10m' };
+        default:              return { type:type };
+      }
+    },
+    deleteResolver(){
+      if(this.selected<0) return;
+      this.resolvers.splice(this.selected,1);
+      if(this.resolvers.length===0){ this.selected = -1; }
+      else if(this.selected>=this.resolvers.length){ this.selected = this.resolvers.length-1; }
+      this.mobileView = this.resolvers.length ? 'detail' : 'list';
+      this.markDirty();
+    },
+
+    // ════ reorder resolvers (priority) ════
+    moveResolver(i, dir){
+      if(i<0) return;
+      var j = i + dir;
+      if(j<0 || j>=this.resolvers.length) return;
+      var a = this.resolvers;
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+      this.selected = j;
+      this.markDirty();
+    },
+    onDragStart(i, ev){
+      this.dragIndex = i;
+      if(ev.dataTransfer){ ev.dataTransfer.effectAllowed = 'move'; try{ ev.dataTransfer.setData('text/plain', String(i)); }catch(e){} }
+    },
+    onDrop(target){
+      if(this.dragIndex<0){ this.dragOverIndex=-1; return; }
+      var from = this.dragIndex;
+      if(from!==target){
+        var a = this.resolvers;
+        var moved = a.splice(from,1)[0];
+        a.splice(target,0,moved);
+        this.selected = target;
+        this.markDirty();
+      }
+      this.dragIndex = -1;
+      this.dragOverIndex = -1;
+    },
+    onDragEnd(){ this.dragIndex=-1; this.dragOverIndex=-1; },
+
+    // ════ payload: strip __id, trim rules, drop empty rows ════
+    buildPayloadResolvers(){
+      return this.resolvers.map((r)=>{
+        var copy = {};
+        for(var k in r){
+          if(k==='__id') continue;
+          copy[k] = r[k];
+        }
+        // trim rule lines and drop empties
+        if(Array.isArray(copy.rule)){
+          copy.rule = copy.rule.map(function(s){ return (s==null?'':String(s)).trim(); }).filter(function(s){ return s!==''; });
+        }
+        // drop empty serverIP entries
+        if(copy.config && Array.isArray(copy.config.serverIP)){
+          copy.config.serverIP = copy.config.serverIP.map(function(s){return (s||'').trim();}).filter(Boolean);
+          if(copy.config.serverIP.length===0) delete copy.config.serverIP;
+          if(Object.keys(copy.config).length===0) delete copy.config;
+        }
+        if(Array.isArray(copy.upstreams)){
+          copy.upstreams = copy.upstreams.map(function(u){
+            var uc = {};
+            for(var uk in u) uc[uk] = u[uk];
+            if(uc.config && Array.isArray(uc.config.serverIP)){
+              uc.config = Object.assign({}, uc.config);
+              uc.config.serverIP = uc.config.serverIP.map(function(s){return (s||'').trim();}).filter(Boolean);
+              if(uc.config.serverIP.length===0) delete uc.config.serverIP;
+              if(Object.keys(uc.config).length===0) delete uc.config;
+            }
+            return uc;
+          });
+        }
+        // strip transient placeholder keys in extraConfig
+        if(copy.extraConfig && typeof copy.extraConfig==='object'){
+          var ec = {};
+          for(var ck in copy.extraConfig){ if(ck.indexOf('__new')!==0) ec[ck] = copy.extraConfig[ck]; }
+          if(Object.keys(ec).length) copy.extraConfig = ec; else delete copy.extraConfig;
+        }
+        return copy;
+      });
+    },
+
+    // ════ validate ════
+    doValidate(){
+      this.busy = true;
+      this.clearStatus();
+      var body = JSON.stringify({ resolvers: this.buildPayloadResolvers() });
+      fetch('/api/config/validate', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: body
+      }).then((r)=> r.json().then((j)=>({ status:r.status, j:j })))
+      .then(({status, j})=>{
+        if(status===200 && j.valid){
+          this.status = { kind:'ok', msg:'Configuration is valid.', detail:'' };
+        } else {
+          this.status = { kind:'error', msg:'Validation failed' + (j.stage ? ' ('+j.stage+')' : ''), detail: this.errText(j) };
+        }
+      }).catch((err)=>{
+        this.status = { kind:'error', msg:'Validate request failed', detail: err.message || String(err) };
+      }).finally(()=>{ this.busy = false; });
+    },
+
+    // ════ save ════
+    doSave(){
+      this.busy = true;
+      this.clearStatus();
+      var body = JSON.stringify({ version: this.version, resolvers: this.buildPayloadResolvers() });
+      fetch('/api/config', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: body
+      }).then((r)=> r.json().then((j)=>({ status:r.status, j:j })).catch(()=>({ status:r.status, j:{} })))
+      .then(({status, j})=>{
+        if(status===200 && j.ok){
+          // re-fetch to get canonicalized config + new version
+          var keepSel = this.selected;
+          return fetch('/api/config').then((r)=>r.json()).then((data)=>{
+            this.applyLoaded(data);
+            if(keepSel>=0 && keepSel<this.resolvers.length) this.selected = keepSel;
+            this.justSaved = true;
+            this.status = { kind:'ok', msg:'Saved. Config reloaded and applied live.', detail:'' };
+          });
+        } else if(status===409 && j.stage==='version'){
+          this.version = j.version || this.version; // adopt server's current version for the reload action context
+          this.status = { kind:'conflict' };
+        } else {
+          this.status = { kind:'error', msg:'Save failed' + (j.stage ? ' ('+j.stage+')' : ''), detail: this.errText(j) };
+        }
+      }).catch((err)=>{
+        this.status = { kind:'error', msg:'Save request failed', detail: err.message || String(err) };
+      }).finally(()=>{ this.busy = false; });
+    },
+
+    reloadDiscard(){
+      this.clearStatus();
+      this.loadConfig();
+    },
+
+    errText(j){
+      if(!j) return '';
+      if(j.error){
+        if(typeof j.error==='string') return j.error;
+        try{ return JSON.stringify(j.error); }catch(e){ return String(j.error); }
+      }
+      return '';
+    },
+    clearStatus(){ this.status = { kind:'', msg:'', detail:'' }; },
+
+    // ════ unsaved-changes guard on tab leave / unload ════
+    init(){
+      window.addEventListener('beforeunload', (e)=>{
+        if(this.dirty){ e.preventDefault(); e.returnValue = ''; }
+      });
+      // guard tab switch away from config with unsaved changes
+      this.$watch('tab', (val, old)=>{
+        if(old==='config' && this.dirty){
+          if(!confirm('You have unsaved configuration changes. Leave anyway?')){
+            this.$nextTick(()=>{ this.tab = 'config'; });
+          }
+        }
+      });
+    }
+  };
+}
 </script>
 </body>
 </html>

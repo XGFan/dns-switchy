@@ -22,38 +22,33 @@ func waitForMainTest(t *testing.T, done <-chan struct{}, message string) {
 }
 
 func TestRunConfigWatcherStopsOnClosedChannels(t *testing.T) {
-	file := "config.yaml"
-	tests := []struct {
-		name  string
-		close func(events chan fsnotify.Event, errs chan error)
-	}{
-		{
-			name: "EventsChannelClosed",
-			close: func(events chan fsnotify.Event, errs chan error) {
-				close(events)
-			},
-		},
-		{
-			name: "ErrorsChannelClosed",
-			close: func(events chan fsnotify.Event, errs chan error) {
-				close(errs)
-			},
-		},
+	tempDir := t.TempDir()
+	file := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(file, []byte("ttl: 1s\n"), 0600); err != nil {
+		t.Fatalf("write config file fail: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			events := make(chan fsnotify.Event)
-			errs := make(chan error)
-			stop := make(chan struct{})
-			done := make(chan struct{})
-
-			go runConfigWatcher(&file, events, errs, func(*string) {}, stop, done)
-			tt.close(events, errs)
-
-			waitForMainTest(t, done, "config watcher did not exit on closed channel")
-		})
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("create watcher fail: %v", err)
 	}
+	if err = watcher.Add(tempDir); err != nil {
+		_ = watcher.Close()
+		t.Fatalf("add dir watch fail: %v", err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+
+	go runConfigWatcher(&file, watcher, func(*string) {}, stop, done)
+
+	// Closing the watcher closes its Events and Errors channels, which must make
+	// runConfigWatcher return.
+	if err = watcher.Close(); err != nil {
+		t.Fatalf("close watcher fail: %v", err)
+	}
+
+	waitForMainTest(t, done, "config watcher did not exit on closed channels")
 }
 
 func TestWatchConfigFileCloseWaitsForWorkerExit(t *testing.T) {
