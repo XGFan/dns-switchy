@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"dns-switchy/config"
+	"dns-switchy/util"
 	"errors"
 	"net"
 	"sync"
@@ -9,8 +10,6 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-
-	"dns-switchy/util"
 )
 
 // fakeMdnsConn 扮演 LAN:测试从 wrote 观察 resolver 发出的查询,向 inbox 注入应答。

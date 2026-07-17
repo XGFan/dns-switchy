@@ -191,6 +191,11 @@ func (m *Mdns) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 			// 重发失败不致命:首发已成功,窗口继续等
 			_, _ = m.conn.WriteToUDP(query, m.group)
 		case <-deadline.C:
+			// reader 若在等待期间死亡,超时是"设施故障"不是"查无此名":
+			// 回 SERVFAIL 且不写负缓存,避免把故障伪装成 NXDOMAIN 缓存 30s
+			if m.dead.Load() {
+				return nil, fmt.Errorf("mdns reader closed: %w", BreakError)
+			}
 			m.negCache.Set(question, negMarker, m.negativeTTL)
 			return nxdomain(msg), nil
 		}
