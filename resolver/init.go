@@ -37,6 +37,8 @@ func createResolver(resolverConfig config.ResolverConfig) (DnsResolver, error) {
 		return NewMock(resolverConfig.(*config.MockConfig))
 	case config.PRELOADER:
 		return NewPreloader(resolverConfig.(*config.PreloaderConfig))
+	case config.MDNS:
+		return NewMdns(resolverConfig.(*config.MdnsConfig))
 
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown resolver type %s", resolverConfig.Type()))

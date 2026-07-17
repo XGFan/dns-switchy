@@ -11,6 +11,7 @@
 - **本地解析**：hosts 文件、dnsmasq 租约文件
 - **全局缓存**：按 resolver 或全局 TTL 缓存响应
 - **nftset 策略路由**：resolver 解析出的 A 记录可自动写入 nftables 集合（带 timeout），供路由器按域名做策略路由（本期仅 IPv4）
+- **mDNS 桥接**：把 DNS-only 客户端（容器 / VM / 无 avahi 的 Linux）的 `.local` 主机名查询桥接到 LAN mDNS，回设备自宣告的活答案（querier-only，不宣告不应答；详见 USAGE 与 `docs/adr/0001`）
 - **热重载**：修改配置文件后自动重载，无需重启
 - **HTTP API**：可选的 HTTP 查询接口
 - **Web Portal**：内置 Web 管理页面——浏览器查询 DNS 解析结果，并可**结构化表单在线编辑 resolvers**（校验 + 备份 + 热替换，详见下文）

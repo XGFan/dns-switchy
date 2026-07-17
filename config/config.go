@@ -252,6 +252,7 @@ const (
 	FORWARD_GROUP ResolverType = "forward-group"
 	PRELOADER     ResolverType = "preloader"
 	MOCK          ResolverType = "mock"
+	MDNS          ResolverType = "mdns"
 )
 
 type ResolverConfig interface {
@@ -329,6 +330,20 @@ func (m MockConfig) Type() ResolverType {
 	return MOCK
 }
 
+// MdnsConfig 配置 mDNS 桥接 resolver(querier-only,见 docs/adr/0001)。
+// Interface 必填:组播组加错接口是静默故障(永远 miss),必须显式指定 LAN 口。
+type MdnsConfig struct {
+	Interface   string        `yaml:"interface,omitempty"`    // 组播出入接口,必填,如 br-lan
+	TTL         time.Duration `yaml:"ttl,omitempty"`          // 命中 A 记录的正缓存,默认 1m
+	NegativeTTL time.Duration `yaml:"negative-ttl,omitempty"` // miss 的负缓存,默认 30s
+	Timeout     time.Duration `yaml:"timeout,omitempty"`      // 组播等待窗口,默认 1s
+	Rule        []string      `yaml:"rule,omitempty"`         // 缺省 [local]
+}
+
+func (m MdnsConfig) Type() ResolverType {
+	return MDNS
+}
+
 func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	_config := _SwitchyConfig{}
 	basePath := inferParseBasePath(contentReader)
@@ -355,6 +370,8 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 			filter = &MockConfig{}
 		case PRELOADER:
 			filter = &PreloaderConfig{}
+		case MDNS:
+			filter = &MdnsConfig{}
 		default:
 			return nil, fmt.Errorf("unknown resolver type: %s", resolverType)
 		}
@@ -503,6 +520,9 @@ func normalizeResolverRules(resolverConfig ResolverConfig, basePath string) erro
 		rules = config.Rule
 		assign = func(parsed []string) { config.Rule = parsed }
 	case *MockConfig:
+		rules = config.Rule
+		assign = func(parsed []string) { config.Rule = parsed }
+	case *MdnsConfig:
 		rules = config.Rule
 		assign = func(parsed []string) { config.Rule = parsed }
 	default:

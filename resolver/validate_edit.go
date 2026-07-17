@@ -3,7 +3,9 @@ package resolver
 import (
 	"dns-switchy/config"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 )
 
 // StrictValidateForEdit performs the extra, save-time validation the web config
@@ -39,9 +41,24 @@ func strictValidateResolver(rc config.ResolverConfig) error {
 		return strictValidateForward(rc.(*config.ForwardConfig))
 	case config.PRELOADER:
 		return strictValidateForward(&rc.(*config.PreloaderConfig).ForwardConfig)
+	case config.MDNS:
+		return strictValidateMdns(rc.(*config.MdnsConfig))
 	default:
 		return fmt.Errorf("unknown resolver type %s", rc.Type())
 	}
+}
+
+// strictValidateMdns 把 mdns 的两类部署期错误拦在保存时:interface 缺失/不存在。
+// 与运行时 NewMdns 的建链失败相比,这里让 web 编辑器在写盘前就报错。
+func strictValidateMdns(mc *config.MdnsConfig) error {
+	name := strings.TrimSpace(mc.Interface)
+	if name == "" {
+		return fmt.Errorf("mdns resolver requires interface")
+	}
+	if _, err := net.InterfaceByName(name); err != nil {
+		return fmt.Errorf("mdns interface %q not found: %w", name, err)
+	}
+	return nil
 }
 
 func strictValidateFile(fc *config.FileConfig) error {
