@@ -26,10 +26,14 @@ steps:
       - chmod 600 ~/.ssh/deploy_key
       - ssh-keyscan -H "$OPENWRT_HOST" >> ~/.ssh/known_hosts 2>/dev/null
       - SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
-      - scp $SSH_OPTS dist/ipk/*/artifacts/*.ipk "$OPENWRT_USER@$OPENWRT_HOST:/tmp/"
-      - |
-        ssh $SSH_OPTS "$OPENWRT_USER@$OPENWRT_HOST" \
-          'opkg install --force-reinstall --force-downgrade /tmp/dns-switchy_*.ipk && opkg install --force-reinstall --force-downgrade /tmp/luci-app-dns-switchy_*.ipk && /etc/init.d/dns-switchy restart && sleep 2 && pidof dns-switchy > /dev/null && echo "Service running" || (echo "Service failed to start" && exit 1) && rm -f /tmp/*.ipk'
+      # 只传服务 ipk，不传 luci-app（net-console ADR-0005：LuCI 入口退役；luci-app 仍构建防烂）。
+      # 用独立目录 + 每次先清空：失败的 run 不会把 ipk 留给下一次。
+      - ssh $SSH_OPTS "$OPENWRT_USER@$OPENWRT_HOST" 'rm -rf /tmp/dns-deploy && mkdir -p /tmp/dns-deploy'
+      - scp $SSH_OPTS dist/ipk/*/artifacts/dns-switchy_*.ipk deploy/openwrt/ci-deploy.sh "$OPENWRT_USER@$OPENWRT_HOST:/tmp/dns-deploy/"
+      # ci-deploy.sh 自己做安装、带 key 探 API、nslookup 验解析、失败装回 lastgood —— dns 挂了
+      # 是全网断解析，这些判断必须写清楚，不塞在一行 ssh 里。
+      - ssh $SSH_OPTS "$OPENWRT_USER@$OPENWRT_HOST" 'cd /tmp/dns-deploy && sh ci-deploy.sh'
+      - ssh $SSH_OPTS "$OPENWRT_USER@$OPENWRT_HOST" 'rm -rf /tmp/dns-deploy'
       - rm -f ~/.ssh/deploy_key
     environment:
       CI_SSH_KEY:
