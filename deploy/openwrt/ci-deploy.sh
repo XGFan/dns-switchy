@@ -38,6 +38,9 @@ svc_ipk=$(ls "$IPK_DIR"/dns-switchy_*.ipk 2>/dev/null | head -n1)
 HAVE_PREV=0
 [ -f "$LASTGOOD" ] && HAVE_PREV=1
 
+# lastgood 在 /mnt/ext 上;它没挂载时装上去的回滚目标会写进只剩 ~8M 的根分区。
+grep -q " /mnt/ext " /proc/mounts || { echo "部署失败: /mnt/ext 未挂载,拒绝安装" >&2; exit 1; }
+
 # --force-downgrade 是必须的:版本号是 0.0.0-<sha8>,sha 之间没有大小可言,不加它
 # opkg 会以「已是最新」为由拒装并**返回 0**,部署静默落空。
 # 刻意不用 --force-reinstall:它对本地 ipk 会先卸载、再按包名去软件源找,而这个包
@@ -52,14 +55,14 @@ pidof dns-switchy >/dev/null 2>&1 || fail "进程没起来"
 
 # 带 key 探 /api/config:证明 HTTP 栈就绪且配置(含 api_key)加载成功。
 # key 从路由器现网配置取(设备状态,CI 没有也不该有)。
+#
+# key 取不到必须硬失败而不是降级:ADR-0003 增补把「生产组件必须有凭证」立为不变量,
+# 空 key 意味着配置丢了/被 -opkg 默认值顶掉了 —— 而一个无鉴权组件对任何探测都 200,
+# 降级放行等于把「凭证失效」标记成「部署成功」并存进 lastgood。
 api_key=$(sed -n 's/^api_key:[[:space:]]*//p' "$CFG" 2>/dev/null | tr -d '"' | head -n1)
-if [ -n "$api_key" ]; then
-    wget -q -O /dev/null -T 5 --header="X-Api-Key: $api_key" http://127.0.0.1:5553/api/config \
-        || fail "API 不应答或拒绝了 api_key(配置可能没加载成功)"
-else
-    wget -q -O /dev/null -T 5 http://127.0.0.1:5553/api/config \
-        || fail "API 不应答(配置可能没加载成功)"
-fi
+[ -n "$api_key" ] || fail "配置里没有 api_key(ADR-0003 增补:生产组件必须有凭证)"
+wget -q -O /dev/null -T 5 --header="X-Api-Key: $api_key" http://127.0.0.1:5553/api/config \
+    || fail "API 不应答或拒绝了 api_key(配置可能没加载成功)"
 
 # 真解析一个域名:HTTP 活着不等于 DNS 面活着,这一步才是「全网没断解析」的直接证据。
 # 用 busybox 自带的 nslookup(路由器上没有 dig);test4x.com 由 dns-switchy 本地
