@@ -1,0 +1,16 @@
+/* 面板样式的唯一入口：用**级联层**决定优先级，而不是靠特异性硬拼。
+ *
+ * 面板契约「特异性陷阱」：Pico v2.1.1 把颜色变量定义在 :host(:not([data-theme=dark]))
+ * （特异性 0,2,0），tokens.css 的裸 :root,:host 映射（0,1,0）无论引入顺序都被压住。
+ * 层序优先于特异性，所以把 Pico 整个压进低层 pico、joy 的东西放高层 joy，
+ * tokens 的 --pico-* 映射就能直接赢——连 Pico 那些写成 var(--pico-primary*) 的派生
+ * 变量（border / switch-checked / form-element-active-border 等）也一并跟着走，
+ * 这是「把映射挂到 .pico 容器上」那个备选方案做不到的（变量代入在 :host 那层就完成了，
+ * 容器上的覆盖对已代入的派生值没有追溯力）。
+ *
+ * @import 由 Vite 在构建期内联，产物里不会留下任何网络请求。 */
+@layer pico, joy;
+
+@import '@picocss/pico/css/pico.conditional.min.css' layer(pico);
+@import './tokens.css' layer(joy);
+@import './panel.css' layer(joy);

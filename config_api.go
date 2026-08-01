@@ -70,11 +70,27 @@ func (s *DnsSwitchyServer) handleConfigGet(w http.ResponseWriter, _ *http.Reques
 		http.Error(w, "marshal config doc: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cfg := nodeToJSONValue(doc)
+	cfg := redactAPIKey(nodeToJSONValue(doc))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config":  cfg,
 		"version": config.ConfigVersion(canonical),
 	})
+}
+
+// redactAPIKey 把顶层 api_key 的值换成掩码再吐给前端。写回不受影响：POST /api/config
+// 只替换 resolvers，顶层一律取磁盘上的原文，掩码不会被写进配置文件。
+// 反代宿主（net-console）在服务端注入 key，浏览器本就不该拿到明文。
+func redactAPIKey(cfg interface{}) interface{} {
+	m, ok := cfg.(*orderedMap)
+	if !ok {
+		return cfg
+	}
+	if v, exists := m.values["api_key"]; exists {
+		if s, isStr := v.(string); !isStr || s != "" {
+			m.set("api_key", "***")
+		}
+	}
+	return m
 }
 
 // handleConfigPost validates the submitted resolvers, and on success backs up +
@@ -85,7 +101,7 @@ func (s *DnsSwitchyServer) handleConfigPost(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "config editor not enabled", http.StatusNotFound)
 		return
 	}
-	if g, bad := guardWrite(r); bad {
+	if g, bad := s.guardWrite(r); bad {
 		http.Error(w, g.message, g.status)
 		return
 	}
@@ -94,6 +110,13 @@ func (s *DnsSwitchyServer) handleConfigPost(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, bodyErrStatus(perr), map[string]interface{}{"ok": false, "stage": "body", "error": perr.Error()})
 		return
 	}
+
+	// Everything from here down is one read-check-write transaction: the version
+	// check is only meaningful if no other writer can slip in before Save. The
+	// body is already decoded above, so the lock covers just this handler's own
+	// disk/validation work.
+	s.configCtl.writeMu.Lock()
+	defer s.configCtl.writeMu.Unlock()
 
 	// Load current on-disk doc, replace only its resolvers value.
 	doc, currentVersion, lerr := s.loadCurrentDoc()
@@ -152,7 +175,7 @@ func (s *DnsSwitchyServer) apiConfigValidateHandler(w http.ResponseWriter, r *ht
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if g, bad := guardWrite(r); bad {
+	if g, bad := s.guardWrite(r); bad {
 		http.Error(w, g.message, g.status)
 		return
 	}
@@ -255,7 +278,12 @@ type guardErr struct {
 // guardWrite enforces the cheap hardening for write endpoints: JSON content
 // type and same-origin (CSRF). Method is checked by the caller. The bool is true
 // when the request is rejected.
-func guardWrite(r *http.Request) (guardErr, bool) {
+//
+// 同源校验只在**未配置 api_key** 时生效：它原本是「无鉴权服务的 CSRF 兜底」。
+// 一旦启用 api-key，浏览器跨站请求带不上自定义头 X-Api-Key（会触发 CORS 预检且我们
+// 不回 CORS 头），鉴权本身就是更强的 CSRF 防护；此时保留同源校验反而会挡掉
+// net-console 之类反代宿主和 curl 之外的合法调用方。
+func (s *DnsSwitchyServer) guardWrite(r *http.Request) (guardErr, bool) {
 	ct := r.Header.Get("Content-Type")
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
@@ -263,7 +291,7 @@ func guardWrite(r *http.Request) (guardErr, bool) {
 	if strings.TrimSpace(strings.ToLower(ct)) != "application/json" {
 		return guardErr{http.StatusUnsupportedMediaType, "content-type must be application/json"}, true
 	}
-	if !sameOriginOK(r) {
+	if !s.authEnabled() && !sameOriginOK(r) {
 		return guardErr{http.StatusForbidden, "cross-origin request rejected"}, true
 	}
 	return guardErr{}, false

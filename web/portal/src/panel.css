@@ -1,0 +1,594 @@
+/* dns-switchy 面板的自有样式。本文件整体位于 joy 层（见 panel-bundle.css），
+ * 层序已经压过 Pico，所以这里不需要为了特异性去堆选择器。
+ *
+ * --joy-* → --pico-* 的映射**不在这里**，在 vendored 的 tokens.css 里；那份是四个
+ * 仓库共享的权威副本，改色板只改它。下面只放本面板私有的变量与布局。 */
+:host {
+  /* 这两个**不是**派生变量：Pico 把它们写成写死的 rgba()，不引用 --pico-primary，
+   * 所以层序帮不上忙，必须手动映射。漏掉的表现是链接下划线与聚焦圈仍是 azure，
+   * 而按钮已经是 joy 色——只看按钮会以为改好了。透明度沿用 Pico 的 .5 / .375。 */
+  --pico-primary-underline: color-mix(in srgb, var(--joy-accent, #5e81ac) 50%, transparent);
+  --pico-primary-focus: color-mix(in srgb, var(--joy-accent, #5e81ac) 37.5%, transparent);
+
+  /* 面板内部间距比 Pico 默认紧一档：这是嵌在控制台格子里的组件，不是整页文档。 */
+  --pico-spacing: 0.8rem;
+  --pico-form-element-spacing-vertical: 0.5rem;
+  --pico-form-element-spacing-horizontal: 0.7rem;
+  --pico-typography-spacing-vertical: 0.8rem;
+
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.pico {
+  font-size: 0.9rem;
+  color: var(--pico-color);
+  background: var(--pico-background-color);
+}
+
+/* Pico 的表单控件默认 margin-bottom，密集表单里会撑得很散 */
+.pico input,
+.pico select,
+.pico textarea {
+  margin-bottom: 0;
+}
+.pico button {
+  margin-bottom: 0;
+  width: auto;
+}
+
+/* ── 通用小件 ── */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.spacer {
+  flex: 1;
+}
+.mono {
+  font-family: var(--mono);
+}
+.muted {
+  color: var(--pico-muted-color);
+}
+.tiny {
+  font-size: 0.75rem;
+}
+.hint {
+  color: var(--pico-muted-color);
+  font-weight: 400;
+  font-size: 0.7rem;
+  margin-left: 0.35rem;
+}
+
+/* 下面这些工具类都要压过 Pico 的元素选择器（.pico button 特异性 0-1-1），
+ * 所以一律带 .pico 前缀；只写 .btn-sm 会被 Pico 的按钮尺寸盖掉。 */
+.pico .btn-sm {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+.pico .btn-icon {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* ── 状态盒 ── */
+.box {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.box.ok {
+  border-color: var(--joy-ok, #a3be8c);
+  color: var(--joy-ok, #a3be8c);
+}
+.box.err {
+  border-color: var(--joy-err, #bf616a);
+  color: var(--joy-err, #bf616a);
+}
+.box.warn {
+  border-color: var(--joy-warn, #ebcb8b);
+  color: var(--joy-warn, #ebcb8b);
+}
+.pico .box code {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--pico-muted-color);
+  word-break: break-all;
+  background: none;
+  padding: 0;
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--pico-muted-border-color);
+  border-top-color: var(--joy-accent, #5e81ac);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  display: inline-block;
+  vertical-align: -2px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── tabs ── */
+.tabs {
+  display: inline-flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 999px;
+  margin-bottom: 0.8rem;
+}
+.pico .tabs button {
+  background: transparent;
+  border: none;
+  color: var(--pico-muted-color);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.pico .tabs button[aria-selected='true'] {
+  background: var(--joy-accent, #5e81ac);
+  color: #fff;
+}
+
+/* ── lookup ── */
+.lookup-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+.pico .lookup-form input[type='text'] {
+  flex: 1 1 12rem;
+  font-family: var(--mono);
+}
+.pico .lookup-form select {
+  flex: 0 0 6.5rem;
+  width: auto;
+  font-family: var(--mono);
+}
+
+.pico table.answers {
+  width: 100%;
+  font-size: 0.78rem;
+  margin: 0;
+}
+.pico table.answers th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pico-muted-color);
+}
+.pico table.answers td {
+  font-family: var(--mono);
+  word-break: break-all;
+  vertical-align: top;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  border: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+}
+.badge.accent {
+  border-color: var(--joy-accent, #5e81ac);
+  color: var(--joy-accent, #5e81ac);
+}
+
+/* ── config: 只读顶栏 + 工具条 ── */
+.readonly-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  align-items: center;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  font-size: 0.72rem;
+  margin-bottom: 0.6rem;
+}
+.readonly-bar .k {
+  color: var(--pico-muted-color);
+  margin-right: 0.3rem;
+}
+.readonly-bar .v {
+  font-family: var(--mono);
+}
+.readonly-bar .note {
+  margin-left: auto;
+  color: var(--pico-muted-color);
+  font-size: 0.68rem;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+.dirty {
+  font-size: 0.72rem;
+  color: var(--joy-warn, #ebcb8b);
+}
+.saved {
+  font-size: 0.72rem;
+  color: var(--joy-ok, #a3be8c);
+}
+
+/* ── config: master/detail ── */
+.master-detail {
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) 1fr;
+  gap: 0.8rem;
+  align-items: start;
+}
+.master {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.master-head {
+  padding: 0.45rem 0.6rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pico-muted-color);
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.r-list {
+  padding: 0.3rem;
+  max-height: 26rem;
+  overflow-y: auto;
+}
+.r-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: var(--pico-border-radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  margin-bottom: 0.15rem;
+}
+/* 选中/悬停用 accent 的低透明度着色，而不是 Pico 的 secondary 实心底色：
+ * 后者在两套主题下都会把行内的 muted 文字（序号、type 徽章）压到看不清。 */
+.r-item:hover {
+  background: color-mix(in srgb, var(--joy-accent, #5e81ac) 10%, transparent);
+}
+.r-item[aria-selected='true'] {
+  border-color: var(--joy-accent, #5e81ac);
+  background: color-mix(in srgb, var(--joy-accent, #5e81ac) 16%, transparent);
+}
+.r-item.dragging {
+  opacity: 0.4;
+}
+.r-item.dragover {
+  box-shadow: inset 0 2px 0 var(--joy-accent, #5e81ac);
+}
+.r-handle {
+  cursor: grab;
+  color: var(--pico-muted-color);
+  user-select: none;
+  flex-shrink: 0;
+}
+.r-idx {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--pico-muted-color);
+  width: 1.1rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+.r-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-label.unnamed {
+  font-style: italic;
+  color: var(--pico-muted-color);
+}
+.master-foot {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.4rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+.add-wrap {
+  position: relative;
+}
+.add-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  background: var(--pico-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  padding: 0.2rem;
+  min-width: 9.5rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.pico .add-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--pico-color);
+  padding: 0.28rem 0.4rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.pico .add-menu button:hover {
+  background: var(--pico-secondary-background);
+  color: var(--pico-secondary-inverse);
+}
+
+.detail {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  padding: 0.8rem;
+  min-width: 0;
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+.back-btn {
+  display: none;
+}
+
+.field {
+  margin-bottom: 0.7rem;
+}
+.field > label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.25rem;
+}
+.pico .field input[type='text'],
+.pico .field textarea,
+.pico .field select {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.field-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.field-row > .field {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.pico .check-line input {
+  width: auto;
+}
+
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.line-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.pico .line-row input {
+  flex: 1;
+  min-width: 0;
+}
+.line-row.dragging {
+  opacity: 0.4;
+}
+.line-row.dragover {
+  box-shadow: inset 0 2px 0 var(--joy-accent, #5e81ac);
+}
+.lr-handle {
+  cursor: grab;
+  color: var(--pico-muted-color);
+  user-select: none;
+  flex-shrink: 0;
+  width: 0.9rem;
+  text-align: center;
+}
+.arrows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pico .arrows button {
+  padding: 0 0.3rem;
+  font-size: 0.55rem;
+  line-height: 1.2;
+}
+.pico .add-line {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--pico-muted-border-color);
+  color: var(--joy-accent, #5e81ac);
+  font-size: 0.72rem;
+  padding: 0.22rem 0.55rem;
+  cursor: pointer;
+}
+.kv-row {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+.pico .kv-row input.k {
+  flex: 0 0 35%;
+  min-width: 5rem;
+}
+.pico .kv-row input.v {
+  flex: 1;
+  min-width: 0;
+}
+
+.qtype-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.qtype-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  user-select: none;
+}
+.pico .qtype-chip input {
+  display: none;
+}
+.qtype-chip.on {
+  border-color: var(--joy-accent, #5e81ac);
+  color: var(--joy-accent, #5e81ac);
+  font-weight: 600;
+}
+
+.upstream-block {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  padding: 0.6rem;
+  margin-bottom: 0.45rem;
+}
+.upstream-block .ub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+.upstream-block .ub-title {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pico-muted-color);
+}
+
+.pico details.adv {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+  padding-top: 0.6rem;
+}
+.pico details.adv > summary {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--joy-accent, #5e81ac);
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+.pico details.adv > summary + * {
+  margin-top: 0.4rem;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 1.6rem 0.8rem;
+  color: var(--pico-muted-color);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* ── card ── */
+.card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  font-size: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+.card-stats .k {
+  color: var(--pico-muted-color);
+  margin-right: 0.3rem;
+}
+.card-stats .v {
+  font-family: var(--mono);
+}
+.card-answer {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+/* ── key 输入 ── */
+.key-prompt {
+  max-width: 26rem;
+}
+.pico .key-prompt input {
+  font-family: var(--mono);
+}
+
+/* ── 窄屏：master/detail 单列切换 ── */
+@media (max-width: 640px) {
+  .master-detail {
+    grid-template-columns: 1fr;
+  }
+  .master-detail[data-view='detail'] .master {
+    display: none;
+  }
+  .master-detail[data-view='list'] .detail {
+    display: none;
+  }
+  .back-btn {
+    display: inline-flex;
+  }
+}

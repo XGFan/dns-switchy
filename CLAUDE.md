@@ -58,7 +58,19 @@ YAML config is parsed in two stages: raw `_SwitchyConfig` struct, then converted
 
 ### HTTP / Web Portal
 
-When `http` is set in config, `server.go` serves an API endpoint (`/api/query`) and an embedded SPA from `web/dist/`. The SPA allows browser-based DNS lookups that bypass the cache.
+When `http` is set in config, `server.go` serves the API (`/api/query`, `/api/config[/validate]`) plus the portal embedded from `web/dist/`. Portal queries bypass the cache.
+
+The portal source lives in `web/portal/` (Preact + Vite) and builds a **single self-contained ES module** `web/dist/panel.js` registering two custom elements — `<dns-card>` (summary) and `<dns-panel>` (full management) — per the shared 面板契约 (`net-console/docs/panel-contract.md`). Shadow DOM, `api-base` attribute. `web/dist/` is a **committed build artifact** (CI only runs `go build`, no node); rebuild with `cd web/portal && npm run build` after touching the frontend.
+
+CSS goes through `src/panel-bundle.css`, which uses **cascade layers** (`@layer pico, joy`) to put Pico.css v2 below the vendored `tokens.css` + `panel.css`. This is load-bearing, not stylistic: Pico defines its colours on `:host(:not([data-theme=dark]))` (specificity 0,2,0), so tokens' bare `:host` mapping loses on specificity no matter the import order, and overriding on the `.pico` container does not reach Pico's derived variables (`--pico-primary-border`, `--pico-switch-checked-background-color`, …) because those substitute `var(--pico-primary*)` at `:host` level. Layer order beats specificity and carries the whole derived chain. When verifying, probe a **bare** Pico control (`<button>` with no class) — elements that reference `var(--joy-*)` directly (e.g. `.badge`) look correct even when the override is broken.
+
+### API auth
+
+`api_key` in config (empty by default) gates every `/api/*` route via the `X-Api-Key` header (`auth.go`). Static assets and `/panel.js` stay open. The key is snapshotted into `DnsSwitchyServer.apiKey` at `Create()` — safe because a changed `api_key` is a top-level change that triggers a full server rebuild, while `POST /api/config` only swaps resolvers. When auth is on, it replaces the Origin/Referer same-origin check in `guardWrite`. A whitespace-only `api_key` is rejected at parse time rather than silently disabling auth.
+
+### Config write concurrency
+
+`POST /api/config` holds `ConfigController.writeMu` across the whole load → version-check → validate → save → swap sequence. The optimistic version token alone is not enough: validation dials upstreams, so the window between reading the version and writing is wide, and two same-version writers would both pass the check and the later one would silently clobber the earlier. `writeMu` is deliberately separate from `mu` (which guards the small applied-state fields) so a slow validation does not block `SetServer`/`AppliedHash`.
 
 ## Key Patterns
 

@@ -28,6 +28,15 @@ import (
 type ConfigController struct {
 	path string
 
+	// writeMu serializes the whole read-check-write sequence of a config write
+	// (load doc -> compare version -> validate -> Save -> markApplied -> swap).
+	// Without it two POSTs carrying the same version both pass the version check
+	// — the optimistic lock only detects conflicts that are already on disk, and
+	// the window is wide because validation dials upstreams. It is separate from
+	// mu (which guards the small applied-state fields) so a long validation does
+	// not block SetServer/AppliedHash readers.
+	writeMu sync.Mutex
+
 	mu          sync.Mutex
 	appliedHash string
 	// appliedTopLevel is the canonical top-level (resolvers blanked) of the

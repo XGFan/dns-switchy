@@ -85,6 +85,7 @@ type DnsSwitchyServer struct {
 	dnsCache   util.Cache
 	nftWriter  nftset.Writer
 	configCtl  *ConfigController // nil when the config editor API is not wired (e.g. unit tests)
+	apiKey     string            // 见 auth.go：空 = 不鉴权；创建后只读
 	shutdown   bool
 	wg         sync.WaitGroup
 }
@@ -222,9 +223,11 @@ func (s *DnsSwitchyServer) plainUDPHandler() dns.HandlerFunc {
 
 func (s *DnsSwitchyServer) httpMux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/query", s.apiQueryHandler)
-	mux.HandleFunc("/api/config/validate", s.apiConfigValidateHandler)
-	mux.HandleFunc("/api/config", s.apiConfigHandler)
+	// /api/* 全量鉴权（含只读的 query/config GET）；静态资源与 /panel.js 不鉴权，
+	// 面板自己会在拿到 401 时渲染 key 输入界面。
+	mux.HandleFunc("/api/query", s.requireAPIKey(s.apiQueryHandler))
+	mux.HandleFunc("/api/config/validate", s.requireAPIKey(s.apiConfigValidateHandler))
+	mux.HandleFunc("/api/config", s.requireAPIKey(s.apiConfigHandler))
 	mux.Handle("/", spaHandler())
 	return mux
 }
@@ -257,9 +260,41 @@ func spaHandler() http.Handler {
 		log.Printf("embed web/dist: %v", err)
 		return http.NotFoundHandler()
 	}
+	return spaHandlerFS(subFS)
+}
+
+// spaHandlerFS 是 spaHandler 的可测形态：接受任意 fs.FS，好让单测能拿一个「没有
+// panel.js」的假文件系统去覆盖探活分支（真 embed 里 panel.js 恒存在）。
+func spaHandlerFS(subFS fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(subFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		// 没被 mux 显式注册的 /api/... 落到这里，说明是不存在的端点，如实回 404。
+		// 走 SPA 兜底会回一个 index.html + 200，前端于是拿 HTML 去 JSON.parse，
+		// 报出一个与真实原因（端点写错了）毫无关系的错误；反代/探活侧同理需要 4xx
+		// 而不是一页 HTML。语义与 exit-pin internal/web/web.go 对齐。
+		if strings.HasPrefix(path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		// /panel.js 是面板契约里的固定路径：net-console 既按它取组件，也拿
+		// 「GET /panel.js 是不是 2xx」当探活判据。
+		//
+		// 它必须显式 stat，**不能走下面的 SPA 兜底**：兜底会把找不到的路径回成
+		// index.html + 200，于是忘了构建前端时探活照样报在线，而宿主页面上是一个
+		// 永远空着的格子——最难查的那种故障。缺失就如实 404。
+		//
+		// no-cache 同样是契约要求：URL 里没有内容指纹，不靠这个头收缓存的话，升级后
+		// 浏览器会继续用旧面板。
+		if path == "/panel.js" {
+			w.Header().Set("Cache-Control", "no-cache")
+			if f, err := fs.Stat(subFS, "panel.js"); err != nil || f.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			fileServer.ServeHTTP(w, r)
+			return
+		}
 		if path != "/" {
 			cleanPath := strings.TrimPrefix(path, "/")
 			if f, err := fs.Stat(subFS, cleanPath); err == nil && !f.IsDir() {
@@ -267,8 +302,11 @@ func spaHandler() http.Handler {
 				return
 			}
 		}
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		// SPA 兜底：改写路径前先 Clone，别在调用方的 *http.Request 上就地改
+		// —— 它可能还要被中间件/日志读到原始路径。
+		fallback := r.Clone(r.Context())
+		fallback.URL.Path = "/"
+		fileServer.ServeHTTP(w, fallback)
 	})
 }
 
@@ -372,6 +410,7 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 		config:    conf,
 		dnsCache:  util.NewDnsCache(conf.TTL),
 		nftWriter: nftset.NewExecWriter(conf.NftSetTable),
+		apiKey:    conf.ApiKey,
 		wg:        sync.WaitGroup{},
 	}
 	s.gen.Store(&resolverGen{resolvers: resolvers})

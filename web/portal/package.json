@@ -1,0 +1,26 @@
+{
+  "name": "dns-switchy-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "vite --host 127.0.0.1 --port 3100",
+    "build": "tsc -b && vite build && npm run build:verify",
+    "build:verify": "node --input-type=module -e \"import { existsSync, readFileSync } from 'node:fs'; import path from 'node:path'; const w = path.resolve(process.cwd(), '../dist'); for (const f of ['index.html','panel.js']) { if (!existsSync(path.join(w,f))) throw new Error('missing web/dist/'+f); } const js = readFileSync(path.join(w,'panel.js'),'utf8'); if (/^\\s*import\\s|from\\s*['\\\"][.\\/]/m.test(js)) throw new Error('panel.js is not self-contained (external import found)');\"",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "preact": "^10.25.4"
+  },
+  "devDependencies": {
+    "@picocss/pico": "^2.1.1",
+    "@playwright/test": "^1.62.1",
+    "@preact/preset-vite": "^2.9.3",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.6",
+    "vitest": "^2.1.8"
+  }
+}

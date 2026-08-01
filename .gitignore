@@ -1,6 +1,11 @@
 .idea
 /dns-switchy
 /dist/
+# 前端工程的依赖与测试产物；web/dist（构建产物）反而要入库，CI 只跑 go build
+web/portal/node_modules/
+web/portal/test-results/
+web/portal/playwright-report/
+web/portal/tsconfig.tsbuildinfo
 local.yaml
 ric.yaml
 /router.yaml

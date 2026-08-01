@@ -6,6 +6,7 @@
 addr: ":1053"            # 监听地址，UDP，必填
 ttl: 5m                  # 全局缓存 TTL，可选
 http: ":8080"            # HTTP API 地址，可选
+api_key: "长随机串"       # /api/* 的鉴权 key，可选，缺省不鉴权
 nftset_table: "inet fw4" # nftset 写入的目标表/族，可选，默认 inet fw4
 resolvers: []            # Resolver 列表，按顺序匹配
 ```
@@ -15,6 +16,7 @@ resolvers: []            # Resolver 列表，按顺序匹配
 | `addr` | string | 是 | UDP 监听地址，格式 `:port` 或 `ip:port` |
 | `ttl` | duration | 否 | 全局缓存时间，如 `5m`、`600s`。设为 `-1s` 禁用缓存 |
 | `http` | string | 否 | HTTP API 地址。TCP 格式 `:8080`，Unix socket 格式 `unix:/path/to/sock` |
+| `api_key` | string | 否 | 非空则全部 `/api/*` 要求 `X-Api-Key` 头，不匹配 401。缺省空 = 不鉴权。详见 [鉴权](#鉴权api-key) |
 | `nftset_table` | string | 否 | nftset 写入的 nftables 表/族，默认 `inet fw4`。详见 [nftset 策略路由](#nftset-策略路由) |
 | `resolvers` | list | 是 | Resolver 数组，按定义顺序依次匹配 |
 
@@ -309,11 +311,30 @@ http: ":8080"              # TCP
 http: "unix:/tmp/dns.sock" # Unix socket
 ```
 
+### 鉴权（api-key）
+
+配置顶层 `api_key` 后：
+
+- **全部 `/api/*` 都要求请求头 `X-Api-Key`**，含只读的 `/api/query` 与 `GET /api/config`；不匹配统一 401。比较走常量时间（先 sha256 再 `subtle.ConstantTimeCompare`），不泄漏 key 长度。
+- **静态资源不鉴权**：`/`（宿主页）与 `/panel.js` 始终可取——否则连输 key 的界面都打不开。
+- `api_key` 为空（缺省）时**完全不鉴权**，行为与旧版一致。要关鉴权请把整行删掉：写成 `api_key: "   "`（全空白）会**拒绝启动**并报错，因为「配置里明明有 api_key」和「实际不鉴权」这两件事外观相同、后果相反，不能靠静默 trim 蒙混过去。
+- 启用 api-key **取代**了原先对写接口的 Origin/Referer 同源（CSRF）校验：浏览器跨站请求带不上自定义头，api-key 本身即更强的 CSRF 防护，且同源校验会误伤反向代理宿主。未配置 `api_key` 时同源校验保持原样。
+- 与鉴权无关的两条硬性校验始终生效：写接口 `Content-Type` 必须是 `application/json`；请求体上限 1 MiB。
+- `GET /api/config` 里的 `api_key` 字段返回 `***` 掩码。写回只替换 `resolvers`，顶层字段一律取磁盘原文，因此掩码不会被写进配置文件。
+
+```shell
+curl -H 'X-Api-Key: <key>' 'http://127.0.0.1:8080/api/query?question=example.com&type=A'
+```
+
+面板侧：key 存 `localStorage['dns.apiKey']`，请求自动带上；收到 401/403 时面板内渲染 key 输入界面，填完写回 localStorage 并重试。
+
 ### Web Portal
 
 浏览器访问 `http://地址:端口/` 即可打开内置 Web 管理页面。
 
-功能：输入域名和查询类型，显示处理该请求的 resolver 名称和最终解析结果。Web Portal 的查询**不走缓存**，直接遍历 resolver 链。
+功能：输入域名和查询类型，显示处理该请求的 resolver 名称和最终解析结果；以及结构化编辑 resolvers。Web Portal 的查询**不走缓存**，直接遍历 resolver 链。
+
+页面由 `<dns-panel api-base="/api">` 承载——它是 `/panel.js` 注册的 custom element（Shadow DOM，样式自包含），同一份 bundle 还注册了总览用的 `<dns-card>`。构建方式见 README「前端（web/portal）」。
 
 ### API
 

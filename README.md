@@ -43,7 +43,11 @@ go build -o dns-switchy
 
 - Web 仅能改 `resolvers`；顶层 `addr` / `http` / `nftset_table` / `ttl` 为只读（如需修改请直接编辑配置文件）。
 - 保存会重写配置文件，**保留 `v2fly:` / `include:` 等指令与未知字段，但不保证保留 YAML 注释 / 原始格式**；旧配置存为带时间戳的 `.bak` 备份。
-- 接口**无鉴权**，写操作可改上游 DNS。**请仅在可信内网使用，切勿暴露到公网**（已内置同源 / CSRF、请求方法、请求体大小等基础防护）。
+- **鉴权（api-key）**：配置顶层的 `api_key` 非空时，**全部 `/api/*`（含只读的查询与配置读取）都要求请求头 `X-Api-Key`**，不匹配一律 401；比较为常量时间。静态资源与 `/panel.js` 不鉴权（否则连输 key 的界面都打不开）。
+- `api_key` 缺省为空 = **不启用鉴权**，行为与旧版完全一致（向后兼容）。
+- 启用 api-key 后，它**取代**了原先的 Origin/Referer 同源（CSRF）校验：浏览器跨站请求带不上自定义头，鉴权本身即是更强的 CSRF 防护。未配置 `api_key` 时同源校验照旧生效。Content-Type 必须为 `application/json`、请求体上限 1 MiB 两条防护始终生效。
+- `GET /api/config` 返回的 `api_key` 字段会被掩码成 `***`（写回只替换 `resolvers`，顶层一律取磁盘原文，掩码不会写进配置文件）。
+- 仍建议**仅在可信内网使用**：一把 key 等同于改上游 DNS 的完整写权限。
 
 HTTP 接口（`http` 开启时）：
 
@@ -54,7 +58,29 @@ HTTP 接口（`http` 开启时）：
 | `POST /api/config/validate` | 校验一组 resolvers（解析 + 构造 + 严格检查），不写盘 |
 | `POST /api/config` | 保存 resolvers（需带版本号做乐观并发 + 备份 + 热替换） |
 
-**OpenWrt**：包内 init.d 让守护进程直接以 `/etc/dns-switchy/config.yaml`（持久分区）为唯一配置，因此 web 编辑**持久保存、重启不丢**；监听端口仍由 UCI `http_port`（LuCI 可改）掌控，启动 / UCI 变更时会幂等同步进该文件。LuCI 页面以 iframe 内嵌此 portal，同源访问不受 CSRF 限制。
+**OpenWrt**：包内 init.d 让守护进程直接以 `/etc/dns-switchy/config.yaml`（持久分区）为唯一配置，因此 web 编辑**持久保存、重启不丢**；监听端口仍由 UCI `http_port`（LuCI 可改）掌控，启动 / UCI 变更时会幂等同步进该文件。LuCI 页面以 iframe 内嵌此 portal；若配了 `api_key`，iframe 内的面板首次访问会要求输入一次 key（存浏览器 localStorage）。
+
+### 前端（web/portal）
+
+Portal 是 Preact + Vite 工程，产出**单文件自包含 ES module** `panel.js`，注册两个 custom element（面板契约 v1）：
+
+| 元素 | 用途 |
+|------|------|
+| `<dns-card api-base="/api">` | 总览卡片：服务状态摘要 + 快捷 DNS lookup |
+| `<dns-panel api-base="/api">` | 完整管理页：lookup + resolvers 结构化编辑 |
+
+两者都用 Shadow DOM（open），样式（Pico.css v2 + `src/tokens.css`）全部内联进 JS，不请求任何外部资源；`api-base` 在挂载时读取一次。key 存 `localStorage['dns.apiKey']`，收到 401/403 时面板内渲染 key 输入界面。
+
+构建产物落在 `web/dist/`，由 `server.go` 的 `//go:embed all:web/dist` 打进单二进制，**产物需要提交进仓库**（CI 只跑 `go build`，不装 node）：
+
+```shell
+cd web/portal
+npm install
+npm run build          # -> web/dist/{panel.js,index.html}
+npm test               # 纯函数单测（vitest）
+npm run test:e2e       # E2E：起真的 dns-switchy 进程，用 Playwright 驱动面板
+npm start              # 本地开发（PORTAL_API_TARGET=http://127.0.0.1:8080 可代理到真后端）
+```
 
 ## 处理流程
 
@@ -66,6 +92,7 @@ HTTP 接口（`http` 开启时）：
 addr: ":1053"
 ttl: 5m
 http: ":8080"            # 可选，HTTP API + Web Portal
+api_key: "..."           # 可选，非空则全部 /api/* 要求 X-Api-Key；缺省不鉴权
 nftset_table: "inet fw4" # 可选，nftset 写入的目标表/族，默认 inet fw4
 resolvers:
   - type: forward

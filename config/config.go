@@ -206,6 +206,8 @@ type SwitchyConfig struct {
 	Http        *HttpConfig
 	Resolvers   []ResolverConfig
 	NftSetTable string // 统一 nft 表/族，默认 "inet fw4"
+	// ApiKey 非空时，全部 /api/* 需带 X-Api-Key 头；缺省空 = 不鉴权（向后兼容）。
+	ApiKey string
 }
 
 // DefaultNftSetTable 是 add element 的目标表/族，对应路由器 fw4 的 inet 表。
@@ -241,6 +243,7 @@ type _SwitchyConfig struct {
 	Http        string                   `yaml:"http,omitempty"`
 	Resolvers   []map[string]interface{} `yaml:"resolvers,omitempty"`
 	NftSetTable string                   `yaml:"nftset_table,omitempty"`
+	ApiKey      string                   `yaml:"api_key,omitempty"`
 }
 
 type ResolverType string
@@ -392,6 +395,13 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	if nftSetTable == "" {
 		nftSetTable = DefaultNftSetTable
 	}
+	// 写了 api_key 但内容全是空白：拒绝启动，而不是静默按「不鉴权」跑。
+	// 这两件事外观几乎一样（配置里明明有 api_key），后果却相反——一个是锁门，
+	// 一个是全 LAN 可写。要关鉴权就整行删掉，意图必须是显式的。
+	apiKey := strings.TrimSpace(_config.ApiKey)
+	if _config.ApiKey != "" && apiKey == "" {
+		return nil, fmt.Errorf("api_key is whitespace-only; remove the key entirely to disable auth")
+	}
 	warnNftSetTTL(resolverConfigs, _config.TTL)
 	return &SwitchyConfig{
 		Addr:        _config.Addr,
@@ -399,6 +409,7 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 		Http:        httpConfig,
 		Resolvers:   resolverConfigs,
 		NftSetTable: nftSetTable,
+		ApiKey:      apiKey,
 	}, nil
 }
 
