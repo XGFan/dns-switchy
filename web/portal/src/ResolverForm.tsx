@@ -17,15 +17,10 @@ function initialExtraRows(r: RawResolver): ExtraRow[] {
 
 export interface ResolverFormProps {
   resolver: RawResolver
-  busy: boolean
-  /** Save 是否可点：调用方汇总了 busy / 未改动 / 版本冲突三种情形。 */
-  saveDisabled: boolean
   /** 任何字段改动后调用：标脏 + 触发重渲染（resolver 是原地修改的）。 */
   onChange: () => void
   onBack: () => void
   onDelete: () => void
-  onValidate: () => void
-  onSave: () => void
 }
 
 export function ResolverForm(props: ResolverFormProps) {
@@ -201,11 +196,12 @@ export function ResolverForm(props: ResolverFormProps) {
   return (
     <div>
       <div class="detail-head">
-        <button class="btn-sm secondary back-btn" onClick={props.onBack}>
-          ← Back
+        <button class="secondary back-btn" onClick={props.onBack}>
+          ← 返回
         </button>
-        <strong>{r.name || '(unnamed)'}</strong>
-        <span class="badge accent">{type}</span>
+        <span class="detail-name">{r.name || '(unnamed)'}</span>
+        {/* type 是标识不是状态：中性徽章，别占 accent（视觉语言 §9） */}
+        <span class="badge">{type}</span>
       </div>
 
       {type !== 'file' ? (
@@ -273,7 +269,7 @@ export function ResolverForm(props: ResolverFormProps) {
             <div class="upstream-block" key={ui}>
               <div class="ub-head">
                 <span class="ub-title">upstream {ui + 1}</span>
-                <button class="btn-icon secondary" title="移除 upstream" onClick={() => removeUpstream(ui)}>
+                <button class="btn-inline secondary" title="移除 upstream" onClick={() => removeUpstream(ui)}>
                   ✕
                 </button>
               </div>
@@ -311,7 +307,7 @@ export function ResolverForm(props: ResolverFormProps) {
                         placeholder="8.8.8.8"
                         onInput={(e) => setServerIP(u, ipi, (e.target as HTMLInputElement).value)}
                       />
-                      <button class="btn-icon secondary" title="移除" onClick={() => removeServerIP(u, ipi)}>
+                      <button class="btn-inline secondary" title="移除" onClick={() => removeServerIP(u, ipi)}>
                         ✕
                       </button>
                     </div>
@@ -337,7 +333,7 @@ export function ResolverForm(props: ResolverFormProps) {
           <div class="row-list">
             {rules.length === 0 ? (
               <p class="muted tiny" style="margin:0">
-                No rules — matches all queries of this resolver's scope.
+                没有规则 —— 该 resolver 会接下它作用域内的全部查询。
               </p>
             ) : null}
             {rules.map((rl, ri) => (
@@ -377,11 +373,11 @@ export function ResolverForm(props: ResolverFormProps) {
                   onInput={(e) => setRule(ri, (e.target as HTMLInputElement).value)}
                 />
                 <span class="arrows">
-                  <button class="btn-icon secondary" title="上移" disabled={ri === 0} onClick={() => moveRule(ri, -1)}>
+                  <button class="btn-inline secondary" title="上移" disabled={ri === 0} onClick={() => moveRule(ri, -1)}>
                     ↑
                   </button>
                   <button
-                    class="btn-icon secondary"
+                    class="btn-inline secondary"
                     title="下移"
                     disabled={ri === rules.length - 1}
                     onClick={() => moveRule(ri, 1)}
@@ -389,7 +385,7 @@ export function ResolverForm(props: ResolverFormProps) {
                     ↓
                   </button>
                 </span>
-                <button class="btn-icon secondary" title="删除规则" onClick={() => removeRule(ri)}>
+                <button class="btn-inline secondary" title="删除规则" onClick={() => removeRule(ri)}>
                   ✕
                 </button>
               </div>
@@ -465,7 +461,7 @@ export function ResolverForm(props: ResolverFormProps) {
               onInput={(e) => setField('location', (e.target as HTMLInputElement).value)}
             />
             {(r.location || '') === 'system' ? (
-              <div class="box warn" style="margin-top:.4rem">
+              <div class="notice notice-warn" style="margin-top:.4rem">
                 <strong>system</strong> = 读操作系统 hosts 文件。非 system 的路径必须在磁盘上存在，
                 否则保存会被拒（409）。
               </div>
@@ -507,7 +503,7 @@ export function ResolverForm(props: ResolverFormProps) {
                       placeholder="value"
                       onInput={(e) => setExtraVal(ki, (e.target as HTMLInputElement).value)}
                     />
-                    <button class="btn-icon secondary" title="移除" onClick={() => removeExtra(ki)}>
+                    <button class="btn-inline secondary" title="移除" onClick={() => removeExtra(ki)}>
                       ✕
                     </button>
                   </div>
@@ -522,7 +518,7 @@ export function ResolverForm(props: ResolverFormProps) {
                 </p>
               ) : null}
               {duplicateExtraKeys.length ? (
-                <div class="box warn" style="margin-top:.4rem">
+                <div class="notice notice-warn" style="margin-top:.4rem">
                   <strong>重复的 key：{duplicateExtraKeys.join('、')}</strong>
                   <code>同名 key 只会保留最后一行的值，请改名或删掉多余的行。</code>
                 </div>
@@ -557,7 +553,7 @@ export function ResolverForm(props: ResolverFormProps) {
                     placeholder="8.8.8.8"
                     onInput={(e) => setServerIP(r, ii, (e.target as HTMLInputElement).value)}
                   />
-                  <button class="btn-icon secondary" title="移除" onClick={() => removeServerIP(r, ii)}>
+                  <button class="btn-inline secondary" title="移除" onClick={() => removeServerIP(r, ii)}>
                     ✕
                   </button>
                 </div>
@@ -578,16 +574,11 @@ export function ResolverForm(props: ResolverFormProps) {
         </details>
       ) : null}
 
+      {/* 校验/保存只留在区块头那一处：同一区块里两套「保存」既是重复入口，
+          也会出现第二个实心主操作（视觉语言 §1）。这里只留危险动作。 */}
       <div class="detail-actions">
-        <button class="btn-sm secondary" onClick={props.onDelete}>
-          Delete resolver
-        </button>
-        <span class="spacer" />
-        <button class="btn-sm secondary" disabled={props.busy} onClick={props.onValidate}>
-          Validate
-        </button>
-        <button class="btn-sm" disabled={props.saveDisabled} onClick={props.onSave}>
-          Save
+        <button class="btn-danger" onClick={props.onDelete}>
+          删除该 resolver
         </button>
       </div>
     </div>

@@ -1,29 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { Api } from './api'
-import { ConfigTab } from './ConfigTab'
+import { Config } from './Config'
 import { Lookup } from './Lookup'
 import { KeyPrompt } from './ui'
 
 export function Panel({ api }: { api: Api }) {
-  const [tab, setTab] = useState<'lookup' | 'config'>('lookup')
   const [needKey, setNeedKey] = useState(false)
-  // 填完 key 后递增：Lookup 直接靠它重挂（无状态可丢），ConfigTab 只把它当重试信号。
+  // 填完 key 后递增：Lookup 直接靠它重挂（无状态可丢），Config 只把它当重试信号。
   const [authEpoch, setAuthEpoch] = useState(0)
-  // config tab 懒挂载，但挂上之后**永不卸载**（只用 hidden 藏起来），
-  // 否则来回切 tab 会丢掉未保存的编辑。
-  const [mountedConfig, setMountedConfig] = useState(false)
   const dirtyRef = useRef(false)
-
-  useEffect(() => {
-    if (tab === 'config') setMountedConfig(true)
-  }, [tab])
 
   const onAuthRequired = useCallback(() => setNeedKey(true), [])
   const onDirtyChange = useCallback((d: boolean) => {
     dirtyRef.current = d
   }, [])
 
-  // 有未保存改动时拦住关页面/刷新。
+  // 有未保存改动时拦住关页面/刷新。页面已经是单页，没有「离开 tab」这一步，
+  // 但关页面这条路还在，保护照旧。
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (dirtyRef.current) {
@@ -35,19 +28,13 @@ export function Panel({ api }: { api: Api }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [])
 
-  function switchTab(next: 'lookup' | 'config') {
-    if (tab === 'config' && next !== 'config' && dirtyRef.current) {
-      if (!confirm('You have unsaved configuration changes. Leave anyway?')) return
-    }
-    setTab(next)
-  }
-
   return (
-    <div>
+    // .panel 是面板的内容列（视觉语言 §5：72rem 居中 + 两侧 1rem），壳内与 standalone 同一份。
+    <div class="panel">
       {/* key 输入是**内联在面板顶部**的，不替换下面的子树：Save 撞 401 时用户手里
-          往往攥着一堆未保存的编辑，把 ConfigTab 卸掉等于当场丢草稿。 */}
+          往往攥着一堆未保存的编辑，把 Config 卸掉等于当场丢草稿。 */}
       {needKey ? (
-        <div style="margin-bottom:.8rem">
+        <div style="margin-bottom:1rem">
           <KeyPrompt
             api={api}
             onSubmit={() => {
@@ -58,31 +45,19 @@ export function Panel({ api }: { api: Api }) {
         </div>
       ) : null}
 
-      <div class="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'lookup'} onClick={() => switchTab('lookup')}>
-          Lookup
-        </button>
-        <button role="tab" aria-selected={tab === 'config'} onClick={() => switchTab('config')}>
-          Config
-        </button>
-      </div>
-
-      {/* config tab 一旦挂载就保持挂载（用 hidden 切换），否则来回切 tab 会丢掉未保存的编辑。 */}
-      <div hidden={tab !== 'lookup'}>
+      {/* 单页：服务概览 → 查询 → 解析器。查询区块作为 children 塞在 Config 的两段之间——
+          概览与解析器读的是同一份配置状态，拆成两个组件就得把那份状态提到这里来，
+          为了排个序不值当。
+          Config 上**没有** key={authEpoch}：它一旦挂上就不许因为填 key 被重建，
+          否则未保存的编辑全没；改用 retryToken，由它自己决定要不要补拉。 */}
+      <Config
+        api={api}
+        onAuthRequired={onAuthRequired}
+        onDirtyChange={onDirtyChange}
+        retryToken={authEpoch}
+      >
         <Lookup key={`lookup-${authEpoch}`} api={api} onAuthRequired={onAuthRequired} />
-      </div>
-      {mountedConfig ? (
-        <div hidden={tab !== 'config'}>
-          {/* 注意这里**没有** key={authEpoch}：ConfigTab 一旦挂上就不许因为填 key 被
-              重建，否则未保存的编辑全没。改用 retryToken，由它自己决定要不要补拉。 */}
-          <ConfigTab
-            api={api}
-            onAuthRequired={onAuthRequired}
-            onDirtyChange={onDirtyChange}
-            retryToken={authEpoch}
-          />
-        </div>
-      ) : null}
+      </Config>
     </div>
   )
 }

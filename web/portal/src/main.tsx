@@ -21,6 +21,14 @@ function defineElement(tag: string, View: ComponentType<{ api: Api }>) {
       // 元素被 appendChild 到别处会先 disconnect 再 connect。attachShadow 对同一个
       // 元素只能调一次，第二次抛 NotSupportedError，面板就永久空白了——所以这里
       // 复用已有的 shadowRoot，且 disconnect 时**不**丢弃它。
+      // 主题固定亮色（面板契约「主题固定亮色」）：Pico 的暗色块选择器是
+      // `:host(:not([data-theme]))`，宿主元素上有**任意** data-theme 就不再跟随
+      // prefers-color-scheme；`[data-theme=light]` 命中亮色块，连 `color-scheme: light`
+      // 一起给上，input/select 这类原生控件才不会被系统暗色渲染成深色。
+      // 暗色规则不删（还在 Pico 里躺着），将来做主题开关时把这里换成读偏好即可；
+      // 留 hasAttribute 判断是给宿主留的显式覆盖口子。
+      if (!this.hasAttribute('data-theme')) this.setAttribute('data-theme', 'light')
+
       const root = this.shadowRoot ?? this.attachShadow({ mode: 'open' })
       if (!this.mount) {
         const style = document.createElement('style')

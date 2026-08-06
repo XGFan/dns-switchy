@@ -34,10 +34,10 @@ go build -o dns-switchy
 
 ## Web Portal
 
-设置 `http` 后，浏览器访问 `http://<host>:<port>/` 即可使用内置管理页面，含两块功能：
+设置 `http` 后，浏览器访问 `http://<host>:<port>/` 即可使用内置管理页面。页面是单页，自上而下三段：**服务概览**（顶层只读字段）、**查询**、**解析器**：
 
-- **Lookup**：输入域名 + 类型，查看由哪个 resolver 解析及结果（不走缓存）。
-- **Config**：以结构化表单**在线编辑 resolvers**——增删 / 调序 resolver（顺序即匹配优先级）、按 type 编辑字段、逐条编辑规则（`v2fly:` / `include:` / `!黑名单` / `keyword:` / `regexp:` 原样保留）。保存前校验、自动备份旧配置、原子写盘并热替换 resolver 链；保存失败不写盘，运行中的 DNS 解析全程不中断。
+- **查询**：输入域名 + 类型，查看由哪个 resolver 解析及结果（不走缓存）。查过之后才会在查询与解析器之间插入一段「结果」。
+- **解析器**：以结构化表单**在线编辑 resolvers**——增删 / 调序 resolver（顺序即匹配优先级）、按 type 编辑字段、逐条编辑规则（`v2fly:` / `include:` / `!黑名单` / `keyword:` / `regexp:` 原样保留）。保存前校验、自动备份旧配置、原子写盘并热替换 resolver 链；保存失败不写盘，运行中的 DNS 解析全程不中断。
 
 **作用域与安全**：
 
@@ -71,6 +71,8 @@ Portal 是 Preact + Vite 工程，产出**单文件自包含 ES module** `panel.
 
 两者都用 Shadow DOM（open），样式（Pico.css v2 + `src/tokens.css`）全部内联进 JS，不请求任何外部资源；`api-base` 在挂载时读取一次。key 存 `localStorage['dns.apiKey']`，收到 401/403 时面板内渲染 key 输入界面。
 
+`<dns-panel>` 的版式按 net-console 的 `docs/visual-language.md`（四组件共用的视觉语言）来：区块 + 分隔线的骨架、两档按钮（动作档 1.7rem / 行内档 1.4rem，`src/panel.css` 里一条兜底规则管全部，新按钮不必挂 class）。standalone 宿主页（`public/index.html`）只负责白底与页头，内容列宽度与留白都在面板里。
+
 构建产物落在 `web/dist/`，由 `server.go` 的 `//go:embed all:web/dist` 打进单二进制，**产物需要提交进仓库**（CI 只跑 `go build`，不装 node）：
 
 ```shell
@@ -80,6 +82,14 @@ npm run build          # -> web/dist/{panel.js,index.html}
 npm test               # 纯函数单测（vitest）
 npm run test:e2e       # E2E：起真的 dns-switchy 进程，用 Playwright 驱动面板
 npm start              # 本地开发（PORTAL_API_TARGET=http://127.0.0.1:8080 可代理到真后端）
+```
+
+真后端配了 `api_key` 时（生产的路由器就是），再给 `PORTAL_API_KEY` 让 dev server 的代理替你补上 `X-Api-Key`，否则 `/api/*` 全 401；不设该变量则代理行为与从前一致：
+
+```shell
+PORTAL_API_TARGET=http://192.168.2.1:5553 \
+PORTAL_API_KEY=$(../../../infra/ops/net-console-dev-env.sh dns-switchy) \
+npm start
 ```
 
 ## 处理流程

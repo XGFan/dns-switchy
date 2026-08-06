@@ -11,7 +11,7 @@ export function Spinner({ label }: { label?: string }) {
 
 export function ErrorBox({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div class="box err">
+    <div class="notice notice-err">
       <strong>{title}</strong>
       {detail ? <code>{detail}</code> : null}
     </div>
@@ -19,7 +19,17 @@ export function ErrorBox({ title, detail }: { title: string; detail?: string }) 
 }
 
 export function OkBox({ text }: { text: string }) {
-  return <div class="box ok">{text}</div>
+  return <div class="notice notice-ok">{text}</div>
+}
+
+/** 空态（视觉语言 §12）：一句现状 + 一句指引，别留纯空白。 */
+export function Empty({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div class="empty">
+      <p class="empty-title">{title}</p>
+      {hint ? <p class="empty-hint">{hint}</p> : null}
+    </div>
+  )
 }
 
 /**
@@ -37,7 +47,7 @@ export function KeyPrompt({ api, onSubmit }: { api: Api; onSubmit: () => void })
         onSubmit()
       }}
     >
-      <div class="box warn" style="margin-bottom:.7rem">
+      <div class="notice notice-warn" style="margin-bottom:.75rem">
         <strong>需要 API key</strong>
         <code>服务端配置了 api_key，请求需带 X-Api-Key。填入后会存在本浏览器。</code>
       </div>
@@ -52,9 +62,7 @@ export function KeyPrompt({ api, onSubmit }: { api: Api; onSubmit: () => void })
           placeholder="config.yaml 里的 api_key"
         />
       </div>
-      <button type="submit" class="btn-sm">
-        保存并重试
-      </button>
+      <button type="submit">保存并重试</button>
     </form>
   )
 }

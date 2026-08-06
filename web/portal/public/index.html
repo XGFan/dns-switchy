@@ -1,39 +1,50 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DNS Switchy</title>
     <style>
-      /* standalone 宿主页只负责给面板一个居中容器；面板自己的样式在 Shadow DOM 里。 */
+      /* standalone 宿主页只负责白底 + 一个静态页头（视觉语言 §14）；内容列的宽度、
+         留白、以及全部控件样式都归面板自己（Shadow DOM 里那份 panel.css）。 */
       body {
         margin: 0;
-        padding: 1.5rem 1rem;
         font-family: system-ui, -apple-system, 'PingFang SC', sans-serif;
         background: #fff;
         color: #1f2328;
       }
-      @media (prefers-color-scheme: dark) {
-        body {
-          background: #13171f;
-          color: #e5e9f0;
-        }
+      /* 主题固定亮色（面板契约「主题固定亮色」）：不再跟随 prefers-color-scheme。
+         暗色规则不删，改由 html 上的 data-theme 门控——将来做主题开关时把
+         data-theme 切成 dark 就活过来，面板那边同一个属性也是这个开关。 */
+      html[data-theme='dark'] body {
+        background: #13171f;
+        color: #e5e9f0;
       }
-      main {
-        max-width: 1100px;
+      /* 页头对齐面板的内容列：同样 72rem 居中，左右 1rem —— 面板内部也是这一档，
+         所以标题与面板里第一个区块头是同一条竖线。 */
+      header {
+        box-sizing: border-box;
+        max-width: 72rem;
         margin: 0 auto;
+        padding: 1rem 1rem 0;
       }
       h1 {
         font-size: 1.15rem;
-        margin: 0 0 1rem;
+        margin: 0 0 0.25rem;
+      }
+      .sub {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #6b7280;
       }
     </style>
   </head>
   <body>
-    <main>
+    <header>
       <h1>DNS Switchy</h1>
-      <dns-panel api-base="/api"></dns-panel>
-    </main>
+      <p class="sub">基于规则的 DNS 分流：查询诊断与解析器配置</p>
+    </header>
+    <dns-panel api-base="/api"></dns-panel>
     <script type="module" src="/panel.js"></script>
   </body>
 </html>
