@@ -6,6 +6,8 @@ import preact from '@preact/preset-vite'
 
 // 设了 PORTAL_API_TARGET 就把 /api 代理到那个真实后端，方便对着跑起来的 dns-switchy 调试。
 const apiTarget = process.env.PORTAL_API_TARGET
+// 真后端配了 api_key 时，用 PORTAL_API_KEY 让代理替开发者补上 X-Api-Key，否则 /api/* 一律 401。
+const apiKey = process.env.PORTAL_API_KEY
 
 export default defineConfig({
   plugins: [preact()],
@@ -31,7 +33,9 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: apiTarget ? { '/api': { target: apiTarget } } : undefined,
+    proxy: apiTarget
+      ? { '/api': { target: apiTarget, headers: apiKey ? { 'X-Api-Key': apiKey } : undefined } }
+      : undefined,
   },
   test: {
     environment: 'node',
