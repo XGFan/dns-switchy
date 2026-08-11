@@ -12,9 +12,9 @@ steps:
   - name: build-ipk
     image: golang:1.26-alpine
     commands:
-      - apk add --no-cache tar fakeroot gzip bash git python3
+      - apk add --no-cache tar fakeroot gzip bash git python3 upx
       - SHORT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
-      - bash scripts/build-openwrt-ipk.sh --version "v0.0.0-$SHORT_SHA" --arch x86_64
+      - bash scripts/build-openwrt-ipk.sh --version "v0.0.0-$SHORT_SHA" --arch x86_64 --upx
       - ls -lh dist/ipk/*/artifacts/*.ipk
 
   - name: deploy

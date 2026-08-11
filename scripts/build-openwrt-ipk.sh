@@ -25,6 +25,7 @@ PACKAGE="all"
 OUTPUT_BASE="${DEFAULT_OUTPUT_BASE}"
 PREPARE_ONLY=false
 PACKAGE_ARCH=""
+ENABLE_UPX=false
 
 ALL_PACKAGES=(
   "dns-switchy"
@@ -39,6 +40,7 @@ usage() {
   -v, --version VERSION    版本号 (如 v1.0.0)，必填或从 git 推断
   -p, --package NAME       仅构建指定包: dns-switchy | luci-app-dns-switchy | all (默认 all)
   -a, --arch ARCH          service ipk 的架构: aarch64_generic | x86_64 | ... (默认 aarch64_generic)
+  -u, --upx                对服务包内的二进制启用 UPX 压缩
   -o, --output-dir DIR     输出根目录 (默认: dist/ipk/)
       --prepare-only       仅校验 skeleton 并准备 deterministic 输出根目录
   -h, --help               显示帮助信息
@@ -266,6 +268,23 @@ build_backend() {
   echo "✓ 后端构建完成: ${output}"
 }
 
+compress_binary() {
+  local binary="$1"
+
+  if [[ "${ENABLE_UPX}" != true ]]; then
+    return 0
+  fi
+
+  require_command upx
+
+  echo "UPX 压缩..."
+
+  # 压缩在 du 统计 Installed-Size 之前完成，因此 control 里记的是压缩后体积。
+  upx --best --lzma "${binary}"
+
+  echo "✓ UPX 压缩完成"
+}
+
 build_locally() {
   local output_root="$1"
   local package="$2"
@@ -308,6 +327,7 @@ build_service_ipk_locally() {
   # Binary
   mkdir -p "${data_root}/usr/bin"
   build_backend "${binary_path}"
+  compress_binary "${binary_path}"
   chmod 0755 "${binary_path}"
 
   # Init script
@@ -452,6 +472,10 @@ while [[ $# -gt 0 ]]; do
       PACKAGE_ARCH="$2"
       shift 2
       ;;
+    -u|--upx)
+      ENABLE_UPX=true
+      shift
+      ;;
     -o|--output-dir)
       OUTPUT_BASE="$2"
       shift 2
@@ -497,6 +521,7 @@ main() {
   echo "版本: ${VERSION}"
   echo "包: ${packages[*]}"
   echo "服务包架构: ${DEFAULT_PACKAGE_ARCH}"
+  echo "UPX: ${ENABLE_UPX}"
   echo "输出根目录: ${output_root}"
   echo "=========================================="
 
