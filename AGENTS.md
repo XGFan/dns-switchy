@@ -1,201 +1,84 @@
-# AGENTS.md - DNS-Switchy agent guide
+# AGENTS.md
 
-## Purpose
+DNS-Switchy is a rule-based DNS proxy written in Go (version per `go.mod`). It routes queries to different upstream resolvers by domain rules; supports UDP DNS, DoH, DoT, DNSCrypt, with caching, hot reload and an embedded web portal. See `README.md` / `USAGE.md` for config shape, `CONTEXT.md` for domain terms, `docs/adr/` for decisions.
 
-Use this file as the working guide for autonomous coding agents in DNS-Switchy.
-Keep changes narrow, verify them, and prefer repo conventions over new patterns.
-
-DNS-Switchy is a Go DNS proxy server with resolver chaining, domain rules,
-and caching. Current repo targets Go 1.26.1, matching `go.mod` and CI.
-
-## What to read first
-
-- `README.md` for the user-facing config shape and resolver examples.
-- `.drone.yml` for CI build settings and target platform.
-- `go.mod` for the active Go version and dependency set.
-- The package you are editing, plus its tests.
-
-## Working rules
-
-- Stay within the requested task. Do not widen scope.
-- Prefer existing package patterns before adding new abstractions.
-- If code changes, run formatting, vetting, and tests before finishing.
-
-## Build, format, lint, test
+## Build, run, test
 
 ```bash
-go build
-go build -o dns-switchy
+go build -o dns-switchy        # build binary
+./dns-switchy -c config.yaml   # run (-x adds timestamps to logs)
 go fmt ./...
 go vet ./...
-go test ./...
-go test ./config
-go test -run TestName ./...
-go test -run TestParseHttpAddr ./config
-go test -run TestConfig ./config
+go test ./...                  # CI runs: go vet ./... && go test -timeout 3m ./...
+go test -run TestParseHttpAddr ./config   # single test
+
+# OpenWrt ipk (service + luci-app); CI uses --arch x86_64 --upx
+bash scripts/build-openwrt-ipk.sh --version v1.0.0 --arch x86_64 [--upx] [--package dns-switchy]
+
+# web portal (web/portal/)
+cd web/portal && npm run build   # writes web/dist/, then verifies panel.js is self-contained
+npm test                         # vitest
+npm run test:e2e                 # playwright
 ```
 
-Notes:
+## CI / deploy
 
-- `go build` writes the default binary as `./dns-switchy`.
-- `go test -run` filters by test name. Use the exact test name from the file.
-- For subtests, keep the parent test name and inspect the `t.Run` cases.
+- Woodpecker (`.woodpecker.yaml`, push to `master`): vet + test → build x86_64 ipk with UPX → scp the **service ipk only** plus `deploy/openwrt/ci-deploy.sh` to the router and run it → bark notify. luci-app is still built to keep it from rotting but is not installed (net-console ADR-0005).
+- `ci-deploy.sh` installs, checks the service and API (with key), runs a real `nslookup`, and only then saves the ipk as lastgood (`/mnt/ext/ipk-lastgood`); any failure reinstalls lastgood. dns-switchy is the whole LAN's DNS, so keep these checks.
+- GitHub Actions (`.github/workflows/release.yml`) only runs on `v*` tags: cross-compiles 64-bit binaries (go-utils overflows 32-bit int) and publishes a GitHub Release.
 
-## Single test examples
+## Architecture
 
-```bash
-go test -run TestParseHttpAddr ./config
-go test -run TestForward_Resolve ./resolver
-```
+### Request flow
 
-Replace the test names with real names from the package you are touching.
+`main.go` watches the config file's **directory** (fsnotify; survives atomic-rename saves) and starts pprof on `:6060`. Config changes funnel through `ConfigController` (`reloader.go`): self-writes are de-duplicated by content hash; resolvers-only changes are swapped in place (RCU), top-level changes rebuild the whole `DnsSwitchyServer` (create new, shut down old).
 
-## Code style, grounded in this repo
+`DnsSwitchyServer` (`server.go`) listens on UDP always and HTTP optionally. A query goes `checkAndUnify` → global cache (`util.Cache`, TTL 0 disables) → resolver chain: first resolver whose `Accept()` returns true handles it. Resolver order in config is match priority.
 
-### Imports
+- `BreakError` (`resolver/forward.go`) stops the chain immediately on failure (`break-on-fail: true`); the mdns resolver always returns it on runtime socket failure so `.local` never falls through to public upstreams.
+- `ResultWriter` abstracts UDP vs HTTP API responses (`DnsWriter` / `HttpWriter`).
+- Resolvers with `nftset` configured write resolved A records into an nftables set after a cache-miss resolve (`nftset/`, IPv4 only).
 
-- Group imports in this order, with blank lines between groups.
-  1. Standard library
-  2. Third-party packages
-  3. Local `dns-switchy/*` packages
-- Let `gofmt` keep the import block tidy.
+### Resolver types (`resolver/`, interface `DnsResolver` in `dns.go`)
 
-### Formatting
+| Type | Purpose |
+|------|---------|
+| `forward` / `forward-group` | Upstream DNS (UDP/DoH/DoT/DNSCrypt). Multiple upstreams race concurrently, first success wins. `ForwardStat` marks an upstream dead after 5 consecutive failures, alive again after 5 probe successes. |
+| `filter` | Drops matching queries (empty answer); ad-blocking. |
+| `file` | Hosts or dnsmasq lease file, refreshed from disk periodically. |
+| `mock` | Fixed IP for matching domain + query type. |
+| `preloader` | Wraps a forward with its own cache and re-resolves before TTL expiry. |
+| `mdns` | Bridges `.local` hostname queries to mDNS (querier-only, binds 5353; see ADR-0001). Must precede any accept-all resolver in the chain. |
 
-- Use `gofmt` for all Go files.
-- Keep line wrapping and alignment to the formatter, not manual spacing.
-- Prefer simple expressions over dense one-liners.
+### Config and rules (`config/`)
 
-### Naming
+YAML is parsed into raw `_SwitchyConfig`, then converted to typed `ResolverConfig`. `parseRule()` expands rules at parse time:
 
-- Packages stay lowercase and single word, like `config`, `resolver`, `util`.
-- Exported types and funcs use PascalCase.
-- Unexported names use camelCase.
-- Test names follow `TestName` or `TestType_Method`.
+- `include:<path-or-url>` — recursive file/HTTP include with cycle detection.
+- `v2fly:<listname>` — v2fly/domain-list-community list: `domain:` becomes suffix match, `full:`/`keyword:`/`regexp:` pass through, `@attr` tags stripped, other prefixes skipped.
 
-### Structs and composition
+v2fly never downloads during parse: `fetchV2flyList()` serves fresh or stale cache (24h TTL by mtime) or, with no cache, a sentinel `full:__v2fly_pending__.invalid` that keeps the resolver from collapsing to accept-all. `StartV2flyRetry` (30s loop) downloads pending lists and triggers a config reload. Cache dir: `$DNS_SWITCHY_CACHE_DIR` → `$HOME/.dns-switchy/cache` (skipped when HOME is `/`, as under OpenWrt procd) → `$TMPDIR/dns-switchy/cache`.
 
-- Group related fields together.
-- Put embedded interfaces and structs near the top of the struct.
-- Use composition and embedding, not deep inheritance-like layers.
-- Config structs should use YAML tags, including `yaml:",inline"` where needed.
+### Domain matching (`util/matcher.go`)
 
-### Interfaces
+`ComplexDomainSet` supports bare-domain suffix match (`DomainSet` tree), `full:`, `keyword:`, `regexp:`, and `!` blacklist on any of them. Priority: blacklist → suffix → full → keyword → regexp. With only blacklist entries, everything else matches.
 
-- Keep interfaces small and focused.
-- Define them in the package that uses them.
-- Match the repo pattern of narrow contracts like resolver and matcher helpers.
+### HTTP API and auth
 
-### Errors
+With `http` set, `server.go` serves `/api/query`, `/api/config`, `/api/config/validate` and the embedded portal (`//go:embed all:web/dist`). Portal queries bypass the cache.
 
-- Wrap errors with context using `fmt.Errorf("...: %w", err)`.
-- Keep error messages specific to the failing operation.
-- Use sentinel errors only when a package truly needs them.
+- `api_key` (empty by default) gates every `/api/*` route via `X-Api-Key` (`auth.go`); static assets and `/panel.js` stay open. When auth is on it replaces the Origin/Referer same-origin check in `guardWrite`. A whitespace-only `api_key` fails parsing instead of silently disabling auth.
+- The key is snapshotted into `DnsSwitchyServer.apiKey` at `Create()`. Safe because changing `api_key` is a top-level change (full rebuild), while `POST /api/config` only swaps resolvers.
+- `POST /api/config` holds `ConfigController.writeMu` across load → version check → validate → save → swap. The optimistic version token alone is not enough: validation dials upstreams, so two same-version writers would both pass and the later would clobber the earlier. `writeMu` is separate from `mu` so slow validation does not block `SetServer`/`AppliedHash`.
 
-### Logging
+### Web portal (`web/portal/`, Preact + Vite)
 
-- Use `log.Printf` for contextual logs.
-- Use `log.Fatalln` for fatal startup failures.
-- When structured output is needed, encode it through `log.Writer()`.
-- Keep log text short and informative.
+- Builds a single self-contained ES module `web/dist/panel.js` registering `<dns-card>` and `<dns-panel>` per the shared panel contract (`net-console/docs/panel-contract.md`); Shadow DOM, `api-base` attribute.
+- `web/dist/` is a **committed build artifact**: CI has no node, so rebuild and commit it after touching the frontend.
+- CSS enters through `src/panel-bundle.css`, which uses cascade layers (`@layer pico, joy`) to put Pico.css v2 below the vendored `tokens.css` + `panel.css`. This is load-bearing: Pico defines colours on `:host(:not([data-theme=dark]))` (specificity 0,2,0), so tokens' bare `:host` mapping loses regardless of import order, and overriding on the `.pico` container does not reach Pico's derived variables (`--pico-primary-border`, `--pico-switch-checked-background-color`, …), which are substituted at `:host` level. When verifying, probe a **bare** Pico control (`<button>` with no class); elements using `var(--joy-*)` directly (e.g. `.badge`) look right even when the override is broken.
 
-### Configuration parsing
+## Conventions
 
-- Follow the repo pattern of parsing into an internal raw struct first.
-- Convert raw config into exported config types after validation.
-- Use YAML tags rather than custom parsing unless the format needs it.
-
-## Testing style
-
-- Keep tests in the same package as the code they cover.
-- Prefer table-driven tests for multiple cases.
-- Use `t.Run` for each case.
-- Keep assertions tight and local to the case.
-- Name tests after behavior, not implementation details.
-
-Example shape:
-
-```go
-func TestParseHttpAddr(t *testing.T) {
-    tests := []struct {
-        name    string
-        args    string
-        wantErr bool
-    }{
-        {name: "ip:port", args: "127.0.0.1:8888"},
-        {name: "only port", args: ":8888"},
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            _, err := ParseHttpAddr(tt.args)
-            if (err != nil) != tt.wantErr {
-                t.Fatalf("ParseHttpAddr() error = %v, wantErr %v", err, tt.wantErr)
-            }
-        })
-    }
-}
-```
-
-## Resolver and config patterns
-
-- Resolver order matters. First matching resolver wins.
-- Domain rules are hierarchical, so parent domains cover subdomains.
-- Config can include external rule files with the `include:` style shown in
-  `README.md`.
-- Hot reload behavior lives in the server path, so watch changes there closely.
-
-### Rule prefixes in config
-
-Rules are expanded at config parse time by `parseRule()` in `config/config.go`.
-
-- Bare domain (`qq.com`) — suffix match via `DomainSet` tree.
-- `!` prefix — blacklist entry. Works with all match types.
-- `include:<path-or-url>` — load external rule file, recursive with cycle
-  detection.
-- `v2fly:<listname>` — download from v2fly/domain-list-community, parse
-  `domain:` as suffix match, pass through `full:`, `keyword:`, `regexp:`
-  with prefix preserved, skip `include:` and unknown prefixes.
-
-### Domain matcher types
-
-`NewDomainMatcher()` in `util/matcher.go` builds a `ComplexDomainSet` from
-the expanded rule list. It supports:
-
-- Bare domains — suffix match via `DomainSet` (hierarchical tree).
-- `full:<domain>` — exact match only, no subdomain matching.
-- `keyword:<text>` — substring match against the query domain.
-- `regexp:<pattern>` — Go `regexp` match against the query domain.
-- `!` prefix — blacklist. Works with all of the above.
-
-Match priority in `MatchDomain()`: blacklist → suffix tree → full → keyword
-→ regexp. If only blacklist entries exist, everything not blacklisted matches.
-
-### v2fly cache
-
-`fetchV2flyList()` in `config/config.go` implements a file-based cache:
-
-- Cache directory: `~/.dns-switchy/cache/`
-- Cache file: `v2fly-<listname>.txt`
-- TTL: 24 hours (based on file mtime)
-- Stale cache used as fallback when download fails.
-- Missing cache + download failure logs a warning and returns empty (never
-  blocks startup).
-
-## What to do before handoff
-
-- Run `go fmt ./...` on any changed Go file.
-- Run `go vet ./...` if code changed.
-- Run the smallest relevant `go test` command first, then `go test ./...` if
-  the change touches shared behavior.
-- Keep the final diff limited to the requested files.
-
-## Cursor and Copilot rules
-
-This repo does not contain any of these files:
-
-- `.cursorrules`
-- `.cursor/rules/`
-- `.github/copilot-instructions.md`
-
-Do not assume extra editor rules exist unless they are added later.
+- Wrap errors with context: `fmt.Errorf("...: %w", err)`. Logging uses `log.Printf`; fatal startup failures use `log.Fatal*`.
+- Config structs use YAML tags (`yaml:",inline"` where needed); parse into a raw struct first, then convert after validation.
+- Tests live in the same package; prefer table-driven tests with `t.Run`. Config tests use `config/testdata/router.yaml`.
