@@ -58,6 +58,7 @@ HTTP 接口（`http` 开启时）：
 | `GET /api/config` | 读取当前配置（JSON）+ 内容版本号 |
 | `POST /api/config/validate` | 校验一组 resolvers（解析 + 构造 + 严格检查），不写盘 |
 | `POST /api/config` | 保存 resolvers（需带版本号做乐观并发 + 备份 + 热替换） |
+| `GET /api/stats` | 查询统计：总数、缓存命中、各 rcode、各 resolver 的查询/失败数与健康状态 |
 
 **OpenWrt**：包内 init.d 让守护进程直接以 `/etc/dns-switchy/config.yaml`（持久分区）为唯一配置，因此 web 编辑**持久保存、重启不丢**；监听端口仍由 UCI `http_port`（LuCI 可改）掌控，启动 / UCI 变更时会幂等同步进该文件。LuCI 页面以 iframe 内嵌此 portal；若配了 `api_key`，iframe 内的面板首次访问会要求输入一次 key（存浏览器 localStorage）。
 

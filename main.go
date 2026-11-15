@@ -93,6 +93,10 @@ func reloadServer(runningServer *DnsSwitchyServer, conf *config.SwitchyConfig) (
 	if err != nil {
 		return runningServer, err
 	}
+	var prevStats *queryStats
+	if runningServer != nil {
+		prevStats = runningServer.stats
+	}
 	if runningServer != nil && !reusePortSupported {
 		// 不支持 reuseport 的平台上新旧 socket 无法共存于同一地址，只能先停旧服务。
 		runningServer.Shutdown()
@@ -102,6 +106,10 @@ func reloadServer(runningServer *DnsSwitchyServer, conf *config.SwitchyConfig) (
 	if err = newServer.Listen(); err != nil {
 		newServer.closeResolvers()
 		return runningServer, err
+	}
+	// 统计跨整体重建延续：改一个顶层字段不该让计数清零。
+	if prevStats != nil {
+		newServer.stats = prevStats
 	}
 	if runningServer != nil {
 		runningServer.Shutdown()

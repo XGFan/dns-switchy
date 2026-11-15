@@ -9,6 +9,7 @@ import (
 	"github.com/AdguardTeam/dnsproxy/upstream"
 	"github.com/miekg/dns"
 	"log"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"sync"
@@ -16,6 +17,30 @@ import (
 )
 
 var BreakError = errors.New("stop on fail")
+
+// upstreamLogger 丢掉 dnsproxy 每次交换失败都打的 "response received"：失败原因已随查询错误
+// 进入 dns-switchy 自己的查询日志，保留它只会让每次失败在 syslog 里出现两遍。其余日志照常输出。
+var upstreamLogger = slog.New(dropMsgHandler{Handler: slog.Default().Handler(), msg: "response received"})
+
+type dropMsgHandler struct {
+	slog.Handler
+	msg string
+}
+
+func (h dropMsgHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		return nil
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h dropMsgHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return dropMsgHandler{Handler: h.Handler.WithAttrs(attrs), msg: h.msg}
+}
+
+func (h dropMsgHandler) WithGroup(name string) slog.Handler {
+	return dropMsgHandler{Handler: h.Handler.WithGroup(name), msg: h.msg}
+}
 
 type Forward struct {
 	Name string
@@ -26,6 +51,11 @@ type Forward struct {
 	breakOnFail bool
 	nftSet      string
 	nftSetTTL   time.Duration
+}
+
+// Alive 报告健康追踪状态；break-on-fail 的 forward 不做判死，恒为 true。
+func (forward *Forward) Alive() bool {
+	return forward.stat.isAlive()
 }
 
 func (forward *Forward) TTL() time.Duration {
@@ -257,6 +287,7 @@ func createUpStream(upConfig config.UpstreamConfig) (upstream.Upstream, error) {
 	one, e := upstream.AddressToUpstream(upConfig.Url, &upstream.Options{
 		Bootstrap: sr,
 		Timeout:   upConfig.Config.Timeout,
+		Logger:    upstreamLogger,
 	})
 	return one, e
 }

@@ -208,6 +208,29 @@ type SwitchyConfig struct {
 	NftSetTable string // 统一 nft 表/族，默认 "inet fw4"
 	// ApiKey 非空时，全部 /api/* 需带 X-Api-Key 头；缺省空 = 不鉴权（向后兼容）。
 	ApiKey string
+	// QueryLog 控制每条 DNS 查询的日志，缺省 errors。
+	QueryLog QueryLog
+}
+
+// QueryLog 是查询日志级别：all 每条查询一行；errors 只记解析失败；off 不记。
+// 缺省 errors：路由器上 syslog 是一个小环形缓冲，逐条记录会在一小时内冲掉其他服务的日志。
+type QueryLog string
+
+const (
+	QueryLogAll    QueryLog = "all"
+	QueryLogErrors QueryLog = "errors"
+	QueryLogOff    QueryLog = "off"
+)
+
+func parseQueryLog(s string) (QueryLog, error) {
+	switch v := QueryLog(strings.ToLower(strings.TrimSpace(s))); v {
+	case "":
+		return QueryLogErrors, nil
+	case QueryLogAll, QueryLogErrors, QueryLogOff:
+		return v, nil
+	default:
+		return "", fmt.Errorf("invalid query_log %q: want all, errors or off", s)
+	}
 }
 
 // DefaultNftSetTable 是 add element 的目标表/族，对应路由器 fw4 的 inet 表。
@@ -244,6 +267,7 @@ type _SwitchyConfig struct {
 	Resolvers   []map[string]interface{} `yaml:"resolvers,omitempty"`
 	NftSetTable string                   `yaml:"nftset_table,omitempty"`
 	ApiKey      string                   `yaml:"api_key,omitempty"`
+	QueryLog    string                   `yaml:"query_log,omitempty"`
 }
 
 type ResolverType string
@@ -402,6 +426,10 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 	if _config.ApiKey != "" && apiKey == "" {
 		return nil, fmt.Errorf("api_key is whitespace-only; remove the key entirely to disable auth")
 	}
+	queryLog, err := parseQueryLog(_config.QueryLog)
+	if err != nil {
+		return nil, err
+	}
 	warnNftSetTTL(resolverConfigs, _config.TTL)
 	return &SwitchyConfig{
 		Addr:        _config.Addr,
@@ -410,6 +438,7 @@ func ParseConfig(contentReader io.Reader) (*SwitchyConfig, error) {
 		Resolvers:   resolverConfigs,
 		NftSetTable: nftSetTable,
 		ApiKey:      apiKey,
+		QueryLog:    queryLog,
 	}, nil
 }
 

@@ -36,7 +36,7 @@ npm run test:e2e                 # playwright
 `DnsSwitchyServer` (`server.go`) listens on UDP + TCP on `addr` and HTTP optionally. `Listen()` (`listen.go`) binds all sockets up front with SO_REUSEPORT; `reloadServer` binds the new server before shutting down the old one, so a failed UDP bind keeps the old server running (TCP/HTTP bind failures only log — a panel port conflict must not take down LAN DNS). Platforms without reuseport (Windows) shut down first. A query goes `checkAndUnify` → global cache (`util.Cache`, TTL 0 disables) → resolver chain: first resolver whose `Accept()` returns true handles it. Resolver order in config is match priority.
 
 - `BreakError` (`resolver/forward.go`) stops the chain immediately on failure (`break-on-fail: true`); the mdns resolver always returns it on runtime socket failure so `.local` never falls through to public upstreams.
-- `ResultWriter` abstracts UDP vs HTTP API responses (`DnsWriter` / `HttpWriter`).
+- `ResultWriter` abstracts UDP vs HTTP API responses (`DnsWriter` / `HttpWriter`). `DnsWriter` writes the per-query JSON log per top-level `query_log` (`all` / `errors` default / `off` — OpenWrt syslog is a ~128 KB ring buffer) and feeds `/api/stats`. dnsproxy's own per-exchange `response received` log is dropped (`upstreamLogger` in `resolver/forward.go`) since the cause already lands in our error log.
 - Resolvers with `nftset` configured write resolved A records into an nftables set after a cache-miss resolve (`nftset/`, IPv4 only).
 
 ### Resolver types (`resolver/`, interface `DnsResolver` in `dns.go`)
@@ -65,7 +65,7 @@ v2fly never downloads during parse: `fetchV2flyList()` serves fresh or stale cac
 
 ### HTTP API and auth
 
-With `http` set, `server.go` serves `/api/query`, `/api/config`, `/api/config/validate` and the embedded portal (`//go:embed all:web/dist`). Portal queries bypass the cache.
+With `http` set, `server.go` serves `/api/query`, `/api/config`, `/api/config/validate`, `/api/stats` (`stats.go`; counters carried across full rebuilds) and the embedded portal (`//go:embed all:web/dist`). Portal queries bypass the cache.
 
 - `api_key` (empty by default) gates every `/api/*` route via `X-Api-Key` (`auth.go`); static assets and `/panel.js` stay open. When auth is on it replaces the Origin/Referer same-origin check in `guardWrite`. A whitespace-only `api_key` fails parsing instead of silently disabling auth.
 - The key is snapshotted into `DnsSwitchyServer.apiKey` at `Create()`. Safe because changing `api_key` is a top-level change (full rebuild), while `POST /api/config` only swaps resolvers.

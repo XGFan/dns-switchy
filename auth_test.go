@@ -68,6 +68,7 @@ func TestAPIKeyRequiredOnAllAPIEndpoints(t *testing.T) {
 		{"ConfigGet", http.MethodGet, "/api/config", "", nil},
 		{"ConfigPost", http.MethodPost, "/api/config", `{"version":"x","resolvers":[]}`, json},
 		{"ConfigValidate", http.MethodPost, "/api/config/validate", `{"resolvers":[]}`, json},
+		{"StatsGet", http.MethodGet, "/api/stats", "", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name+"/NoKey", func(t *testing.T) {

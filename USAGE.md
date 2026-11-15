@@ -8,6 +8,7 @@ ttl: 5m                  # 全局缓存 TTL，可选
 http: ":8080"            # HTTP API 地址，可选
 api_key: "长随机串"       # /api/* 的鉴权 key，可选，缺省不鉴权
 nftset_table: "inet fw4" # nftset 写入的目标表/族，可选，默认 inet fw4
+query_log: errors        # 查询日志：all / errors / off，可选，默认 errors
 resolvers: []            # Resolver 列表，按顺序匹配
 ```
 
@@ -18,6 +19,7 @@ resolvers: []            # Resolver 列表，按顺序匹配
 | `http` | string | 否 | HTTP API 地址。TCP 格式 `:8080`，Unix socket 格式 `unix:/path/to/sock` |
 | `api_key` | string | 否 | 非空则全部 `/api/*` 要求 `X-Api-Key` 头，不匹配 401。缺省空 = 不鉴权。详见 [鉴权](#鉴权api-key) |
 | `nftset_table` | string | 否 | nftset 写入的 nftables 表/族，默认 `inet fw4`。详见 [nftset 策略路由](#nftset-策略路由) |
+| `query_log` | string | 否 | 查询日志级别：`all` 每条查询一行，`errors` 只记解析失败（默认），`off` 不记。逐条记录会很快填满 OpenWrt 的 syslog 环形缓冲；排查时临时改 `all`，统计看 `GET /api/stats` |
 | `resolvers` | list | 是 | Resolver 数组，按定义顺序依次匹配 |
 
 ## Resolver 链
@@ -356,6 +358,25 @@ API 查询同样**不走缓存**。
   "answer": "1.2.3.4"
 }
 ```
+
+#### 统计
+
+`GET /api/stats` 返回自进程启动以来经 UDP/TCP 进来的查询统计（`/api/query` 诊断查询不计；热替换和整体重建都不清零）：
+
+```json
+{
+  "since": "2026-11-15T16:47:40+08:00",
+  "total": 1089,
+  "cache_hits": 249,
+  "rcodes": {"NOERROR": 770, "NXDOMAIN": 83, "SERVFAIL": 236},
+  "resolvers": [
+    {"name": "dnsmasq", "queries": 364, "failures": 0, "alive": true},
+    {"name": "FilterResolver(...)", "queries": 12, "failures": 0}
+  ]
+}
+```
+
+`resolvers` 按当前链顺序列出，名字与查询日志里的 `resolver` 字段一致；`alive` 只对带健康追踪的 forward / forward-group / preloader 给出。
 
 ## 完整配置示例
 

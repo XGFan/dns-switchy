@@ -753,3 +753,34 @@ resolvers:
 		})
 	}
 }
+
+func TestParseConfigQueryLog(t *testing.T) {
+	cases := []struct {
+		line    string
+		want    QueryLog
+		wantErr bool
+	}{
+		{"", QueryLogErrors, false},
+		{"query_log: all", QueryLogAll, false},
+		{"query_log: Errors", QueryLogErrors, false},
+		{"query_log: off", QueryLogOff, false},
+		{"query_log: verbose", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.line, func(t *testing.T) {
+			parsed, err := ParseConfig(strings.NewReader("addr: \":1053\"\n" + c.line + "\n"))
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseConfig(%q) error = nil, want invalid query_log", c.line)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseConfig(%q) error = %v", c.line, err)
+			}
+			if parsed.QueryLog != c.want {
+				t.Fatalf("QueryLog = %q, want %q", parsed.QueryLog, c.want)
+			}
+		})
+	}
+}

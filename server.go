@@ -87,6 +87,7 @@ type DnsSwitchyServer struct {
 	nftWriter  nftset.Writer
 	configCtl  *ConfigController // nil when the config editor API is not wired (e.g. unit tests)
 	apiKey     string            // 见 auth.go：空 = 不鉴权；创建后只读
+	stats      *queryStats       // nil = 不统计（单测直接构造的 server）
 	shutdown   bool
 	wg         sync.WaitGroup
 
@@ -220,7 +221,13 @@ func (s *DnsSwitchyServer) serve(name string, fn func() error) {
 
 func (s *DnsSwitchyServer) dnsHandler() dns.HandlerFunc {
 	return func(writer dns.ResponseWriter, msg *dns.Msg) {
-		s.dnsMsgHandler(&DnsWriter{writer, msg, time.Now().UnixMilli()}, msg)
+		s.dnsMsgHandler(&DnsWriter{
+			writer:   writer,
+			msg:      msg,
+			start:    time.Now().UnixMilli(),
+			queryLog: s.config.QueryLog,
+			stats:    s.stats,
+		}, msg)
 	}
 }
 
@@ -231,6 +238,7 @@ func (s *DnsSwitchyServer) httpMux() http.Handler {
 	mux.HandleFunc("/api/query", s.requireAPIKey(s.apiQueryHandler))
 	mux.HandleFunc("/api/config/validate", s.requireAPIKey(s.apiConfigValidateHandler))
 	mux.HandleFunc("/api/config", s.requireAPIKey(s.apiConfigHandler))
+	mux.HandleFunc("/api/stats", s.requireAPIKey(s.apiStatsHandler))
 	mux.Handle("/", spaHandler())
 	return mux
 }
@@ -414,6 +422,7 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 		dnsCache:  util.NewDnsCache(conf.TTL),
 		nftWriter: nftset.NewExecWriter(conf.NftSetTable),
 		apiKey:    conf.ApiKey,
+		stats:     newQueryStats(),
 		wg:        sync.WaitGroup{},
 	}
 	s.gen.Store(&resolverGen{resolvers: resolvers})
@@ -438,9 +447,15 @@ type ResultWriter interface {
 }
 
 type DnsWriter struct {
-	writer dns.ResponseWriter
-	msg    *dns.Msg
-	start  int64
+	writer   dns.ResponseWriter
+	msg      *dns.Msg
+	start    int64
+	queryLog config.QueryLog // 空值（单测直接构造）按 all 处理
+	stats    *queryStats
+}
+
+func (w *DnsWriter) logSuccess() bool {
+	return w.queryLog == "" || w.queryLog == config.QueryLogAll
 }
 
 type HttpWriter struct {
@@ -495,17 +510,21 @@ func (w *DnsWriter) RemoteAddr() net.Addr {
 }
 
 func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
-	remoteAddr := w.writer.RemoteAddr().String()
-	structureLog := StructureLog{
-		Resolver:   fmt.Sprintf("%s", name),
-		Remote:     remoteAddr[:strings.LastIndex(remoteAddr, ":")],
-		Time:       time.Now().UnixMilli() - w.start,
-		Type:       dns.TypeToString[w.msg.Question[0].Qtype],
-		Question:   w.msg.Question[0].Name,
-		RCode:      dns.RcodeToString[resp.Rcode],
-		AnswerSize: len(resp.Answer),
+	resolverName := fmt.Sprintf("%s", name)
+	w.stats.record(resolverName, resp.Rcode, false)
+	if w.logSuccess() {
+		remoteAddr := w.writer.RemoteAddr().String()
+		structureLog := StructureLog{
+			Resolver:   resolverName,
+			Remote:     remoteAddr[:strings.LastIndex(remoteAddr, ":")],
+			Time:       time.Now().UnixMilli() - w.start,
+			Type:       dns.TypeToString[w.msg.Question[0].Qtype],
+			Question:   w.msg.Question[0].Name,
+			RCode:      dns.RcodeToString[resp.Rcode],
+			AnswerSize: len(resp.Answer),
+		}
+		_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	}
-	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	writeResp := resp.Copy()
 	writeResp.Id = w.msg.Id
 	writeResp.Opcode = w.msg.Opcode
@@ -529,22 +548,27 @@ func (w *DnsWriter) maxSize() int {
 }
 
 func (w *DnsWriter) Fail(name interface{}, err error) {
-	remoteAddr := w.writer.RemoteAddr().String()
-	structureLog := StructureLog{
-		Resolver: fmt.Sprintf("%s", name),
-		Remote:   remoteAddr[:strings.LastIndex(remoteAddr, ":")],
-		Time:     time.Now().UnixMilli() - w.start,
-		Type:     dns.TypeToString[w.msg.Question[0].Qtype],
-		Question: w.msg.Question[0].Name,
-		Error:    errString(err),
+	resolverName := fmt.Sprintf("%s", name)
+	w.stats.record(resolverName, dns.RcodeServerFailure, true)
+	if w.queryLog != config.QueryLogOff {
+		remoteAddr := w.writer.RemoteAddr().String()
+		structureLog := StructureLog{
+			Resolver: resolverName,
+			Remote:   remoteAddr[:strings.LastIndex(remoteAddr, ":")],
+			Time:     time.Now().UnixMilli() - w.start,
+			Type:     dns.TypeToString[w.msg.Question[0].Qtype],
+			Question: w.msg.Question[0].Name,
+			Error:    errString(err),
+		}
+		_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	}
-	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	resp := new(dns.Msg)
 	resp.SetRcode(w.msg, dns.RcodeServerFailure)
 	_ = w.writer.WriteMsg(resp)
 }
 
 func (w *DnsWriter) Rcode(rcode int) {
+	w.stats.record("", rcode, false)
 	resp := new(dns.Msg)
 	if w.msg != nil {
 		resp.SetRcode(w.msg, rcode)

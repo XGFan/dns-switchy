@@ -1,8 +1,10 @@
 package resolver
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -287,5 +289,18 @@ func TestForwardBreakOnFailDoesNotTripOnPerNameFailures(t *testing.T) {
 	}
 	if resp, err := query("host.lan."); err != nil || resp == nil {
 		t.Fatalf("good name after 10 failures: resp=%v err=%v, want answer", resp, err)
+	}
+}
+
+func TestUpstreamLoggerDropsOnlyExchangeResult(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(dropMsgHandler{Handler: slog.NewTextHandler(&buf, nil), msg: "response received"})
+	l.Error("response received", "addr", "127.0.0.1:1053")
+	if buf.Len() != 0 {
+		t.Fatalf("per-exchange log not dropped: %s", buf.String())
+	}
+	l.With("k", "v").Warn("bootstrap failed")
+	if !strings.Contains(buf.String(), "bootstrap failed") || !strings.Contains(buf.String(), "k=v") {
+		t.Fatalf("other logs must pass through, got %q", buf.String())
 	}
 }
