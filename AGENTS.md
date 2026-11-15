@@ -43,7 +43,7 @@ npm run test:e2e                 # playwright
 
 | Type | Purpose |
 |------|---------|
-| `forward` / `forward-group` | Upstream DNS (UDP/DoH/DoT/DNSCrypt). Multiple upstreams race concurrently, first success wins. `ForwardStat` marks an upstream dead after 5 consecutive failures, alive again after 5 probe successes. |
+| `forward` / `forward-group` | Upstream DNS (UDP/DoH/DoT/DNSCrypt). Multiple upstreams race concurrently, first success wins. `ForwardStat` marks an upstream dead after 5 consecutive failures, alive again after 5 probe successes — except `break-on-fail` forwards, which never skip (there is no fallback, so tripping would only turn per-name failures into whole-resolver SERVFAIL); their errors wrap `BreakError` with the upstream cause. |
 | `filter` | Drops matching queries (empty answer); ad-blocking. |
 | `file` | Hosts or dnsmasq lease file, refreshed from disk periodically. |
 | `mock` | Fixed IP for matching domain + query type. |

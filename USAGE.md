@@ -76,7 +76,7 @@ resolvers: []            # Resolver 列表，按顺序匹配
 | `tls://...` | DNS-over-TLS | `tls://dns.google` |
 | `sdns://...` | DNSCrypt | `sdns://...` |
 
-多个上游并行查询，取最先返回的结果。每个上游有健康追踪：连续 5 次失败标记为不可用，连续 5 次成功恢复。
+多个上游并行查询，取最先返回的结果。resolver 有健康追踪：连续 5 次失败标记为不可用（之后的查询直接跳到链中下一个 resolver），连续 5 次探测成功恢复。`break-on-fail: true` 的 resolver 不做这种跳过：失败本就不会落到下游，每个查询都照常请求上游，个别名字失败不影响其他名字。
 
 可选 `nftset` / `nftset_ttl` 字段把该 resolver 的 A 答案写进 nftables 集合，见 [nftset 策略路由](#nftset-策略路由)。
 

@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -243,5 +244,48 @@ func TestForwardStatConcurrentTransitions(t *testing.T) {
 	}
 	if alive, failCount, successCount := stat.snapshot(); !alive || failCount != 0 || successCount != 0 {
 		t.Fatalf("after concurrent successes ForwardStat = {alive:%v failCount:%d successCount:%d}, want {alive:true failCount:0 successCount:0}", alive, failCount, successCount)
+	}
+}
+
+// byNameUpstream fails queries for names in fail and answers the rest.
+type byNameUpstream struct{ fail map[string]bool }
+
+func (u byNameUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	if u.fail[msg.Question[0].Name] {
+		return nil, errors.New("i/o timeout")
+	}
+	resp := new(dns.Msg)
+	resp.SetReply(msg)
+	return resp, nil
+}
+func (byNameUpstream) Address() string { return "by-name" }
+func (byNameUpstream) Close() error    { return nil }
+
+// 线上场景：个别公网 ip6.arpa 反查持续超时，曾让 dnsmasq 被判死、*.lan 全部 SERVFAIL。
+// break-on-fail 的 resolver 不判死：坏名字各自失败（带原因、仍是 BreakError），好名字照常解析。
+func TestForwardBreakOnFailDoesNotTripOnPerNameFailures(t *testing.T) {
+	bad := "1.0.0.0.ip6.arpa."
+	forward := &Forward{
+		Name:        "dnsmasq",
+		Upstream:    byNameUpstream{fail: map[string]bool{bad: true}},
+		stat:        ForwardStat{alive: true},
+		breakOnFail: true,
+	}
+	query := func(name string) (*dns.Msg, error) {
+		msg := new(dns.Msg)
+		msg.SetQuestion(name, dns.TypePTR)
+		return forward.Resolve(msg)
+	}
+	for i := 0; i < 10; i++ {
+		_, err := query(bad)
+		if !errors.Is(err, BreakError) {
+			t.Fatalf("failure %d: err = %v, want BreakError", i, err)
+		}
+		if !strings.Contains(err.Error(), "i/o timeout") {
+			t.Fatalf("failure %d: err = %q, want upstream cause kept", i, err)
+		}
+	}
+	if resp, err := query("host.lan."); err != nil || resp == nil {
+		t.Fatalf("good name after 10 failures: resp=%v err=%v, want answer", resp, err)
 	}
 }

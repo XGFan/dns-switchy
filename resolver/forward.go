@@ -52,15 +52,20 @@ func (forward *Forward) Accept(msg *dns.Msg) bool {
 }
 
 func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
+	// break-on-fail 的 resolver 不做判死跳过：失败本来就不会落到下游，判死不换来任何回退，
+	// 只会把「少数名字超时」放大成「所有名字立即 SERVFAIL」（例如个别公网 ip6.arpa 反查超时
+	// 让 dnsmasq 整体被判死，*.lan 全部解析失败）。每个查询照常请求上游，各自成败。
+	if forward.breakOnFail {
+		resp, err := forward.Exchange(context.Background(), msg)
+		if err != nil {
+			return resp, fmt.Errorf("%w: %v", BreakError, err)
+		}
+		return resp, nil
+	}
 	if forward.stat.isAlive() {
 		resp, err := forward.Exchange(context.Background(), msg)
 		if changed, alive := forward.stat.checkStatus(err); changed && !alive {
 			log.Printf("%s is dead, will skip", forward.String())
-		}
-		if err != nil {
-			if forward.breakOnFail {
-				return resp, BreakError
-			}
 		}
 		return resp, err
 	} else {
@@ -71,9 +76,6 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 				log.Printf("%s is alive, will cusome", forward.String())
 			}
 		}(probe)
-		if forward.breakOnFail {
-			return nil, BreakError
-		}
 		return nil, errors.New(forward.String() + ": too many fail, just skip")
 	}
 }
