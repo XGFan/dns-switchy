@@ -53,7 +53,7 @@ func (forward *Forward) Accept(msg *dns.Msg) bool {
 
 func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	if forward.stat.isAlive() {
-		resp, err := forward.Exchange(msg)
+		resp, err := forward.Exchange(context.Background(), msg)
 		if changed, alive := forward.stat.checkStatus(err); changed && !alive {
 			log.Printf("%s is dead, will skip", forward.String())
 		}
@@ -66,7 +66,7 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	} else {
 		probe := msg.Copy()
 		go func(probe *dns.Msg) {
-			_, err := forward.Exchange(probe)
+			_, err := forward.Exchange(context.Background(), probe)
 			if changed, alive := forward.stat.checkStatus(err); changed && alive {
 				log.Printf("%s is alive, will cusome", forward.String())
 			}
@@ -151,20 +151,22 @@ func (mu *MultiUpstream) Close() error {
 	return nil
 }
 
-func (mu *MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
+func (mu *MultiUpstream) Exchange(ctx context.Context, m *dns.Msg) (*dns.Msg, error) {
 	if len(mu.upstreams) == 1 {
 		// Single upstream: synchronous, no goroutine, already covered by the
 		// caller's lifecycle (outer RCU). No WaitGroup tracking needed.
-		return mu.upstreams[0].Exchange(m)
+		return mu.upstreams[0].Exchange(ctx, m)
 	}
 	result := make(chan interface{})
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	// done 只用于通知输家放弃回传结果，必须独立于调用方 ctx：若派生自 ctx，
+	// ctx 取消时 done 与 result 同时就绪，goroutine 可能随机丢弃结果，下面的收集循环会永久阻塞。
+	done, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 	for _, u := range mu.upstreams {
 		mu.wg.Add(1)
 		go func(up upstream.Upstream, q *dns.Msg) {
 			defer mu.wg.Done()
-			resp, err := up.Exchange(q.Copy())
+			resp, err := up.Exchange(ctx, q.Copy())
 			var r interface{}
 			if err != nil {
 				r = err
@@ -176,7 +178,7 @@ func (mu *MultiUpstream) Exchange(m *dns.Msg) (*dns.Msg, error) {
 				}
 			}
 			select {
-			case <-ctx.Done():
+			case <-done.Done():
 				return
 			case result <- r:
 				return

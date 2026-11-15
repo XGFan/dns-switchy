@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -13,7 +14,7 @@ type testForwardErrUpstream struct {
 	err error
 }
 
-func (up testForwardErrUpstream) Exchange(*dns.Msg) (*dns.Msg, error) {
+func (up testForwardErrUpstream) Exchange(context.Context, *dns.Msg) (*dns.Msg, error) {
 	return nil, up.err
 }
 
@@ -28,7 +29,7 @@ func (up testForwardErrUpstream) Close() error {
 type testForwardSuccessUpstream struct {
 }
 
-func (testForwardSuccessUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (testForwardSuccessUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	resp := new(dns.Msg)
 	resp.SetReply(msg)
 	return resp, nil
@@ -48,7 +49,7 @@ type testForwardProbeUpstream struct {
 	observed chan string
 }
 
-func (up *testForwardProbeUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (up *testForwardProbeUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	up.entered <- msg
 	<-up.release
 	up.observed <- msg.Question[0].Name

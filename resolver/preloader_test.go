@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"net"
 	"sync"
 	"testing"
@@ -13,7 +14,7 @@ import (
 type testUpstream struct {
 }
 
-func (testUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (testUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	resp := new(dns.Msg)
 	resp.SetReply(msg)
 	return resp, nil
@@ -30,7 +31,7 @@ func (testUpstream) Close() error {
 type testPreloaderCacheUpstream struct {
 }
 
-func (testPreloaderCacheUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (testPreloaderCacheUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	resp := new(dns.Msg)
 	resp.SetReply(msg)
 	resp.Answer = []dns.RR{

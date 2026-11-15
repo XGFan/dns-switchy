@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // fastUpstream returns a successful reply immediately, winning any race.
 type fastUpstream struct{}
 
-func (fastUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (fastUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	resp := new(dns.Msg)
 	resp.SetReply(msg)
 	return resp, nil
@@ -39,7 +40,7 @@ func newBlockingUpstream() *blockingUpstream {
 	}
 }
 
-func (b *blockingUpstream) Exchange(msg *dns.Msg) (*dns.Msg, error) {
+func (b *blockingUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	atomic.AddInt32(&b.inFlight, 1)
 	select {
 	case b.entered <- struct{}{}:
@@ -74,7 +75,7 @@ func TestMultiUpstreamCloseWaitsForLoser(t *testing.T) {
 	blocker := newBlockingUpstream()
 	mu := NewMultiUpstream([]upstream.Upstream{fastUpstream{}, blocker})
 
-	resp, err := mu.Exchange(newMultiUpstreamTestMsg())
+	resp, err := mu.Exchange(context.Background(), newMultiUpstreamTestMsg())
 	if err != nil {
 		t.Fatalf("Exchange() error = %v, want nil (fast upstream wins)", err)
 	}
@@ -127,7 +128,7 @@ func TestMultiUpstreamCloseWaitsForLoser(t *testing.T) {
 // path runs synchronously (no racing goroutine) and Close still works.
 func TestMultiUpstreamSingleUpstreamSynchronous(t *testing.T) {
 	mu := NewMultiUpstream([]upstream.Upstream{fastUpstream{}})
-	resp, err := mu.Exchange(newMultiUpstreamTestMsg())
+	resp, err := mu.Exchange(context.Background(), newMultiUpstreamTestMsg())
 	if err != nil {
 		t.Fatalf("Exchange() error = %v, want nil", err)
 	}
@@ -136,5 +137,45 @@ func TestMultiUpstreamSingleUpstreamSynchronous(t *testing.T) {
 	}
 	if err := mu.Close(); err != nil {
 		t.Fatalf("Close() error = %v, want nil", err)
+	}
+}
+
+// ctxUpstream blocks until the caller's ctx is cancelled, like real dnsproxy
+// upstreams that honour ctx.
+type ctxUpstream struct{}
+
+func (ctxUpstream) Exchange(ctx context.Context, _ *dns.Msg) (*dns.Msg, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (ctxUpstream) Address() string { return "ctx" }
+func (ctxUpstream) Close() error    { return nil }
+
+// TestMultiUpstreamCallerCancelDoesNotHang verifies that cancelling the
+// caller's ctx makes Exchange return an error instead of blocking forever
+// (every racer must still deliver its result to the collect loop).
+func TestMultiUpstreamCallerCancelDoesNotHang(t *testing.T) {
+	ups := make([]upstream.Upstream, 8)
+	for i := range ups {
+		ups[i] = ctxUpstream{}
+	}
+	for i := 0; i < 50; i++ {
+		mu := NewMultiUpstream(ups)
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := mu.Exchange(ctx, newMultiUpstreamTestMsg())
+			errCh <- err
+		}()
+		cancel()
+		select {
+		case err := <-errCh:
+			if err == nil {
+				t.Fatalf("iteration %d: Exchange() error = nil, want error after cancel", i)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: Exchange() hung after caller ctx cancel", i)
+		}
+		_ = mu.Close()
 	}
 }
