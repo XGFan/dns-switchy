@@ -25,10 +25,10 @@ export default defineConfig({
       formats: ['es'],
       fileName: () => 'panel.js',
     },
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        // 契约要求「无额外 chunk」：内联所有动态导入，且不切 vendor。
-        inlineDynamicImports: true,
+        // 契约要求「无额外 chunk」：关闭代码分割，内联所有动态导入，且不切 vendor。
+        codeSplitting: false,
       },
     },
   },
