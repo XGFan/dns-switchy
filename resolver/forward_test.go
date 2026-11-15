@@ -263,14 +263,15 @@ func (u byNameUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, err
 func (byNameUpstream) Address() string { return "by-name" }
 func (byNameUpstream) Close() error    { return nil }
 
-// 线上场景：个别公网 ip6.arpa 反查持续超时，曾让 dnsmasq 被判死、*.lan 全部 SERVFAIL。
-// break-on-fail 的 resolver 不判死：坏名字各自失败（带原因、仍是 BreakError），好名字照常解析。
-func TestForwardBreakOnFailDoesNotTripOnPerNameFailures(t *testing.T) {
+// 线上场景：dnsmasq 上几条 dns-sd / 公网 ip6.arpa 反查持续超时，曾因「连续 5 次失败」被判死，
+// 期间 *.lan 全部 SERVFAIL。其他名字近期还在成功，就不能判死；失败仍带出上游原因。
+func TestForwardStatDoesNotTripWhileOtherNamesSucceed(t *testing.T) {
 	bad := "1.0.0.0.ip6.arpa."
+	now := time.Unix(1_000_000, 0)
 	forward := &Forward{
 		Name:        "dnsmasq",
 		Upstream:    byNameUpstream{fail: map[string]bool{bad: true}},
-		stat:        ForwardStat{alive: true},
+		stat:        ForwardStat{alive: true, now: func() time.Time { return now }},
 		breakOnFail: true,
 	}
 	query := func(name string) (*dns.Msg, error) {
@@ -278,17 +279,48 @@ func TestForwardBreakOnFailDoesNotTripOnPerNameFailures(t *testing.T) {
 		msg.SetQuestion(name, dns.TypePTR)
 		return forward.Resolve(msg)
 	}
-	for i := 0; i < 10; i++ {
+	if _, err := query("host.lan."); err != nil {
+		t.Fatalf("good name: %v", err)
+	}
+	now = now.Add(5 * time.Second)
+	for i := 0; i < 10; i++ { // 一批同时超时的失败
 		_, err := query(bad)
-		if !errors.Is(err, BreakError) {
-			t.Fatalf("failure %d: err = %v, want BreakError", i, err)
-		}
-		if !strings.Contains(err.Error(), "i/o timeout") {
-			t.Fatalf("failure %d: err = %q, want upstream cause kept", i, err)
+		if !errors.Is(err, BreakError) || !strings.Contains(err.Error(), "i/o timeout") {
+			t.Fatalf("failure %d: err = %v, want BreakError with upstream cause", i, err)
 		}
 	}
+	if !forward.Alive() {
+		t.Fatal("forward marked dead although another name succeeded 5s ago")
+	}
 	if resp, err := query("host.lan."); err != nil || resp == nil {
-		t.Fatalf("good name after 10 failures: resp=%v err=%v, want answer", resp, err)
+		t.Fatalf("good name after failures: resp=%v err=%v, want answer", resp, err)
+	}
+}
+
+// 上游整体不可达（30 秒内没有任何成功）照样判死：之后的查询立即失败，不再每次等满超时。
+func TestForwardStatTripsWhenNoSuccessWithinWindow(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	up := &countingUpstream{answer: true}
+	forward := &Forward{
+		Name:        "ric",
+		Upstream:    up,
+		stat:        ForwardStat{alive: true, now: func() time.Time { return now }},
+		breakOnFail: true,
+	}
+	if _, err := forward.Resolve(newForwardTestMsg("corp.example")); err != nil {
+		t.Fatalf("initial success: %v", err)
+	}
+	forward.Upstream = testForwardErrUpstream{err: errors.New("i/o timeout")}
+	now = now.Add(deadAfterNoSuccess)
+	for i := 0; i < 5; i++ {
+		_, _ = forward.Resolve(newForwardTestMsg("corp.example"))
+	}
+	if forward.Alive() {
+		t.Fatal("forward still alive after 5 failures and no success for the whole window")
+	}
+	_, err := forward.Resolve(newForwardTestMsg("corp.example"))
+	if !errors.Is(err, BreakError) || !strings.Contains(err.Error(), "is dead") {
+		t.Fatalf("err while dead = %v, want fast BreakError naming the dead forward", err)
 	}
 }
 

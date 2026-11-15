@@ -53,7 +53,7 @@ type Forward struct {
 	nftSetTTL   time.Duration
 }
 
-// Alive 报告健康追踪状态；break-on-fail 的 forward 不做判死，恒为 true。
+// Alive 报告健康追踪状态（判死后查询直接跳过，见 ForwardStat）。
 func (forward *Forward) Alive() bool {
 	return forward.stat.isAlive()
 }
@@ -82,20 +82,13 @@ func (forward *Forward) Accept(msg *dns.Msg) bool {
 }
 
 func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
-	// break-on-fail 的 resolver 不做判死跳过：失败本来就不会落到下游，判死不换来任何回退，
-	// 只会把「少数名字超时」放大成「所有名字立即 SERVFAIL」（例如个别公网 ip6.arpa 反查超时
-	// 让 dnsmasq 整体被判死，*.lan 全部解析失败）。每个查询照常请求上游，各自成败。
-	if forward.breakOnFail {
-		resp, err := forward.Exchange(context.Background(), msg)
-		if err != nil {
-			return resp, fmt.Errorf("%w: %v", BreakError, err)
-		}
-		return resp, nil
-	}
 	if forward.stat.isAlive() {
 		resp, err := forward.Exchange(context.Background(), msg)
 		if changed, alive := forward.stat.checkStatus(err); changed && !alive {
 			log.Printf("%s is dead, will skip", forward.String())
+		}
+		if err != nil && forward.breakOnFail {
+			return resp, fmt.Errorf("%w: %v", BreakError, err)
 		}
 		return resp, err
 	} else {
@@ -106,15 +99,35 @@ func (forward *Forward) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 				log.Printf("%s is alive, will cusome", forward.String())
 			}
 		}(probe)
+		if forward.breakOnFail {
+			return nil, fmt.Errorf("%w: %s is dead, skipped", BreakError, forward)
+		}
 		return nil, errors.New(forward.String() + ": too many fail, just skip")
 	}
 }
+
+// deadAfterNoSuccess：判死除了连续失败次数，还要求这段时间内没有任何成功。
+//
+// 只看「连续失败」会把个别名字的失败误判成上游整体不可用：一批同时发出、同时超时的查询
+// 在计数上就是「连续」的（线上 dnsmasq 因几条 dns-sd / 公网 ip6.arpa 反查超时被反复判死，
+// 期间其余名字都在正常应答，*.lan 却全部 SERVFAIL）。上游真挂时没有任何成功，照样会判死、
+// 快速失败，不必让每个查询都等满超时（ric 配 10s 超时，单次失败要 20s）。
+const deadAfterNoSuccess = 30 * time.Second
 
 type ForwardStat struct {
 	mu           sync.Mutex
 	alive        bool
 	failCount    int
 	successCount int
+	lastSuccess  time.Time
+	now          func() time.Time // 单测注入；nil 用 time.Now
+}
+
+func (stat *ForwardStat) clock() time.Time {
+	if stat.now != nil {
+		return stat.now()
+	}
+	return time.Now()
 }
 
 func (stat *ForwardStat) isAlive() bool {
@@ -133,10 +146,14 @@ func (stat *ForwardStat) checkStatus(e error) (changed bool, alive bool) {
 	stat.mu.Lock()
 	defer stat.mu.Unlock()
 
+	now := stat.clock()
+	if e == nil {
+		stat.lastSuccess = now
+	}
 	if stat.alive {
 		if e != nil {
 			stat.failCount += 1
-			if stat.failCount >= 5 {
+			if stat.failCount >= 5 && now.Sub(stat.lastSuccess) >= deadAfterNoSuccess {
 				stat.failCount = 0
 				stat.successCount = 0
 				stat.alive = false
