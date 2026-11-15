@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -198,5 +199,73 @@ func TestNewPreloaderRejectsInvalidTTL(t *testing.T) {
 				t.Fatalf("NewPreloader() error = %q, want invalid ttl error", got)
 			}
 		})
+	}
+}
+
+type countingUpstream struct {
+	calls  atomic.Int32
+	answer bool
+}
+
+func (u *countingUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	u.calls.Add(1)
+	resp := new(dns.Msg)
+	resp.SetReply(msg)
+	if u.answer {
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+			A:   net.IPv4(10, 0, 0, 1),
+		}}
+	}
+	return resp, nil
+}
+func (u *countingUpstream) Address() string { return "counting" }
+func (u *countingUpstream) Close() error    { return nil }
+
+func newCountingPreloader(up *countingUpstream, ttl time.Duration) *Preloader {
+	return &Preloader{Forward: &Forward{Name: "pl", Upstream: up, ttl: ttl, stat: ForwardStat{alive: true}}}
+}
+
+// 查过的名字不能永久刷新：闲置超过 preloaderIdleTicks 个周期就淘汰，活跃的照常刷新。
+func TestPreloaderRefreshEvictsIdleAndRefreshesActive(t *testing.T) {
+	up := &countingUpstream{answer: true}
+	ttl := time.Minute
+	pl := newCountingPreloader(up, ttl)
+	query := func(name string) {
+		msg := new(dns.Msg)
+		msg.SetQuestion(name, dns.TypeA)
+		if _, err := pl.Resolve(msg); err != nil {
+			t.Fatalf("Resolve(%s): %v", name, err)
+		}
+	}
+	query("idle.example.")
+	query("active.example.")
+	idleQ := dns.Question{Name: "idle.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+
+	now := time.Now().Add(preloaderIdleTicks*ttl + 2*ttl)
+	pl.touch(dns.Question{Name: "active.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}, now.Add(-ttl))
+	up.calls.Store(0)
+	pl.refresh(now)
+
+	if _, ok := pl.dnsCache.Load(idleQ); ok {
+		t.Fatal("idle entry still cached, want evicted")
+	}
+	if _, ok := pl.lastHit.Load(idleQ); ok {
+		t.Fatal("idle entry still tracked in lastHit, want removed")
+	}
+	if got := up.calls.Load(); got != 1 {
+		t.Fatalf("upstream calls during refresh = %d, want 1 (only the active entry)", got)
+	}
+}
+
+func TestPreloaderNoAnswerLeavesNoLastHit(t *testing.T) {
+	pl := newCountingPreloader(&countingUpstream{answer: false}, time.Minute)
+	msg := new(dns.Msg)
+	msg.SetQuestion("empty.example.", dns.TypeA)
+	_, _ = pl.Resolve(msg)
+	n := 0
+	pl.lastHit.Range(func(_, _ any) bool { n++; return true })
+	if n != 0 {
+		t.Fatalf("lastHit entries = %d, want 0 for a name that never entered the cache", n)
 	}
 }

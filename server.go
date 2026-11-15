@@ -420,7 +420,7 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 	s := &DnsSwitchyServer{
 		config:    conf,
 		dnsCache:  util.NewDnsCache(conf.TTL),
-		nftWriter: nftset.NewExecWriter(conf.NftSetTable),
+		nftWriter: nftset.NewDedupWriter(nftset.NewExecWriter(conf.NftSetTable)),
 		apiKey:    conf.ApiKey,
 		stats:     newQueryStats(),
 		wg:        sync.WaitGroup{},

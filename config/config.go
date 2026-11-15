@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"dns-switchy/nftset"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
@@ -459,9 +460,11 @@ func warnNftSetTTL(resolvers []ResolverConfig, globalTTL time.Duration) {
 		if own, ok := resolverOwnTTL(rc); ok && own > 0 {
 			effectiveTTL = own
 		}
-		if effectiveTTL > 0 && spec.NftSetTTL < effectiveTTL {
-			log.Printf("nftset %s: nftset_ttl %s shorter than effective cache ttl %s; "+
-				"set elements may expire while answers are still cached", spec.NftSet, spec.NftSetTTL, effectiveTTL)
+		// 写集合有去重窗口（nftset.DedupWindow）：被跳过的那次解析仍会缓存满 effectiveTTL，
+		// 集合条目最多早一个窗口过期，所以要多留出一个窗口。
+		if need := effectiveTTL + nftset.DedupWindow(spec.NftSetTTL); effectiveTTL > 0 && spec.NftSetTTL < need {
+			log.Printf("nftset %s: nftset_ttl %s shorter than effective cache ttl %s + write dedup window %s; "+
+				"set elements may expire while answers are still cached", spec.NftSet, spec.NftSetTTL, effectiveTTL, nftset.DedupWindow(spec.NftSetTTL))
 		}
 	}
 }

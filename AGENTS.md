@@ -37,7 +37,7 @@ npm run test:e2e                 # playwright
 
 - `BreakError` (`resolver/forward.go`) stops the chain immediately on failure (`break-on-fail: true`); the mdns resolver always returns it on runtime socket failure so `.local` never falls through to public upstreams.
 - `ResultWriter` abstracts UDP vs HTTP API responses (`DnsWriter` / `HttpWriter`). `DnsWriter` writes the per-query JSON log per top-level `query_log` (`all` / `errors` default / `off` — OpenWrt syslog is a ~128 KB ring buffer) and feeds `/api/stats`. dnsproxy's own per-exchange `response received` log is dropped (`upstreamLogger` in `resolver/forward.go`) since the cause already lands in our error log.
-- Resolvers with `nftset` configured write resolved A records into an nftables set after a cache-miss resolve (`nftset/`, IPv4 only).
+- Resolvers with `nftset` configured write resolved A records into an nftables set after a cache-miss resolve (`nftset/`, IPv4 only). Writes fork `nft`, so `nftset.NewDedupWriter` skips a (set, IP) written within `min(nftset_ttl/2, 1m)` — kept short because a firewall reload flushes sets.
 
 ### Resolver types (`resolver/`, interface `DnsResolver` in `dns.go`)
 
@@ -47,7 +47,7 @@ npm run test:e2e                 # playwright
 | `filter` | Drops matching queries (empty answer); ad-blocking. |
 | `file` | Hosts or dnsmasq lease file, refreshed from disk periodically. |
 | `mock` | Fixed IP for matching domain + query type. |
-| `preloader` | Wraps a forward with its own cache and re-resolves before TTL expiry. |
+| `preloader` | Wraps a forward with its own cache and re-resolves before TTL expiry; names not queried for `preloaderIdleTicks` (60) refresh periods are evicted instead of refreshed. |
 | `mdns` | Bridges `.local` hostname queries to mDNS (querier-only, binds 5353; see ADR-0001). Must precede any accept-all resolver in the chain. |
 
 ### Config and rules (`config/`)

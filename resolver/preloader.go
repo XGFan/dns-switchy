@@ -6,12 +6,18 @@ import (
 	"github.com/miekg/dns"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// preloaderIdleTicks：一个名字连续这么多个刷新周期没被查询就淘汰、不再刷新。否则查过的每个
+// 名字都会被永久保留并按周期重新解析，内存和上游请求随运行时间单调增长。
+const preloaderIdleTicks = 60
 
 type Preloader struct {
 	*Forward
 	dnsCache  sync.Map
+	lastHit   sync.Map // dns.Question -> *atomic.Int64（最近一次被查询的 UnixNano）
 	ticker    *time.Ticker
 	stop      chan struct{}
 	done      chan struct{}
@@ -56,21 +62,47 @@ func (pl *Preloader) Work() {
 			log.Printf("preloader %s exit", pl)
 			return
 		case <-pl.ticker.C:
-			pl.dnsCache.Range(func(key, value interface{}) bool {
-				v := value.(TimeItem)
-				if v.ExpiredAt.After(time.Now()) {
-					return true
-				}
-				newMsg := new(dns.Msg)
-				oldQ := key.(dns.Question)
-				newMsg.Question = append(newMsg.Question, oldQ)
-				newMsg.Id = dns.Id()
-				newMsg.RecursionDesired = true
-				_, _ = pl.PreLoad(newMsg)
-				return true
-			})
+			pl.refresh(time.Now())
 		}
 	}
+}
+
+// refresh 重新解析已过期的条目；超过 preloaderIdleTicks 个周期没被查询的条目直接淘汰。
+func (pl *Preloader) refresh(now time.Time) {
+	idleBefore := now.Add(-preloaderIdleTicks * pl.ttl).UnixNano()
+	pl.dnsCache.Range(func(key, value interface{}) bool {
+		v := value.(TimeItem)
+		if v.ExpiredAt.After(now) {
+			return true
+		}
+		oldQ := key.(dns.Question)
+		if pl.lastHitOf(oldQ) < idleBefore {
+			pl.dnsCache.Delete(oldQ)
+			pl.lastHit.Delete(oldQ)
+			return true
+		}
+		newMsg := new(dns.Msg)
+		newMsg.Question = append(newMsg.Question, oldQ)
+		newMsg.Id = dns.Id()
+		newMsg.RecursionDesired = true
+		_, _ = pl.PreLoad(newMsg)
+		return true
+	})
+}
+
+func (pl *Preloader) touch(q dns.Question, now time.Time) {
+	v, ok := pl.lastHit.Load(q)
+	if !ok {
+		v, _ = pl.lastHit.LoadOrStore(q, new(atomic.Int64))
+	}
+	v.(*atomic.Int64).Store(now.UnixNano())
+}
+
+func (pl *Preloader) lastHitOf(q dns.Question) int64 {
+	if v, ok := pl.lastHit.Load(q); ok {
+		return v.(*atomic.Int64).Load()
+	}
+	return 0
 }
 
 type TimeItem struct {
@@ -90,11 +122,18 @@ func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
 }
 
 func (pl *Preloader) Resolve(msg *dns.Msg) (*dns.Msg, error) {
-	if cached, exist := pl.dnsCache.Load(msg.Question[0]); exist {
+	q := msg.Question[0]
+	if cached, exist := pl.dnsCache.Load(q); exist {
+		pl.touch(q, time.Now())
 		return cached.(TimeItem).Item.Copy(), nil
-	} else {
-		return pl.PreLoad(msg)
 	}
+	resp, err := pl.PreLoad(msg)
+	// 只为真正进了缓存的名字记录查询时间：lastHit 的条目随缓存条目一起淘汰，
+	// 没答案、没进缓存的名字若也记录，就会在 lastHit 里永久残留。
+	if _, stored := pl.dnsCache.Load(q); stored {
+		pl.touch(q, time.Now())
+	}
+	return resp, err
 }
 
 func NewPreloader(pc *config.PreloaderConfig) (*Preloader, error) {

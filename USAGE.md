@@ -157,9 +157,9 @@ file resolver 只做精确域名匹配（不做子域名匹配），仅响应 A 
     - example.com
 ```
 
-preloader 维护独立缓存，不使用全局缓存。适合对延迟敏感的高频域名。
+preloader 维护独立缓存，不使用全局缓存。适合对延迟敏感的高频域名。连续 60 个 `ttl` 周期没被查询的域名会从缓存淘汰、不再刷新，下次查询时重新解析。
 
-preloader 继承 forward 的全部配置，包括 `nftset` / `nftset_ttl`（见 [nftset 策略路由](#nftset-策略路由)）；由于预加载会按 `ttl` 周期重新解析，每个周期都会刷新集合条目 timeout。
+preloader 继承 forward 的全部配置，包括 `nftset` / `nftset_ttl`（见 [nftset 策略路由](#nftset-策略路由)）；它的应答不进全局缓存，因此每次查询都会刷新集合条目 timeout（受下述写入去重约束）。
 
 ### mdns
 
@@ -287,7 +287,8 @@ rule:
 
 - **只有配了 `nftset` 的 resolver 才写集合**；其它 resolver 行为完全不变。
 - **本期仅 IPv4**：只收集应答里的 A 记录写入集合，AAAA 被忽略。
-- **写入时机**：仅在 cache-miss（实际解析）时同步写入，写在返回客户端之前，保证客户端拿到 IP 去连接时集合已就绪。缓存命中不重复写集合——因此要求 `nftset_ttl ≥ 该 resolver 的生效缓存 TTL`（resolver 自身配了正 `ttl` 即用其值，否则回退到顶层 `ttl`）；否则缓存命中期内集合条目可能提前过期、漏标流量。配置加载时若 `nftset_ttl` 短于生效缓存 TTL 会打印告警（非致命）。
+- **写入时机**：仅在 cache-miss（实际解析）时同步写入，写在返回客户端之前，保证客户端拿到 IP 去连接时集合已就绪。缓存命中不重复写集合——因此要求 `nftset_ttl ≥ 该 resolver 的生效缓存 TTL + 写入去重窗口`（生效缓存 TTL：resolver 自身配了正 `ttl` 即用其值，否则回退到顶层 `ttl`；去重窗口见下条）；否则缓存命中期内集合条目可能提前过期、漏标流量。配置加载时不满足会打印告警（非致命）。
+- **写入去重**：同一集合的同一 IP 在 `min(nftset_ttl/2, 1 分钟)` 内只写一次，避免每次解析都启动一个 `nft` 进程；窗口过后再次解析时重写，因此防火墙重载清空集合后最多 1 分钟补回。不同 `nftset_ttl` 写同一集合时，短 timeout 的写入不会挡住长 timeout 的写入；写入失败不计入去重，下次照常重试。
 - **写入非致命**：集合不存在或 `nft` 报错只记日志，不影响返回给客户端的 DNS 答案。
 - **集合定义归路由器**：dns-switchy 只往集合里 `add element`，不负责创建集合（`type ipv4_addr; flags timeout;`）、ip rule、路由表等 plumbing。
 - 顶层 `nftset_table` 统一所有 nftset 写入的表/族，默认 `inet fw4`（OpenWrt fw4 的 inet 表）。

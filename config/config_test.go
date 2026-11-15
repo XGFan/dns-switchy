@@ -784,3 +784,28 @@ func TestParseConfigQueryLog(t *testing.T) {
 		})
 	}
 }
+
+// 写集合有去重窗口，nftset_ttl 与缓存 TTL 相等也会漏标：要求多留一个窗口。
+func TestParseConfigNftSetTTLWarnsWithoutDedupMargin(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	_, err := ParseConfig(strings.NewReader(`
+addr: ":1053"
+resolvers:
+  - type: forward
+    name: corp
+    ttl: 10m
+    url: 114.114.114.114
+    nftset: corp4
+    nftset_ttl: 10m
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "dedup window") {
+		t.Fatalf("expected nftset_ttl warning mentioning the dedup window, got log: %q", buf.String())
+	}
+}
