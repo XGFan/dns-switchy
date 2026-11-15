@@ -6,7 +6,9 @@ import (
 	"dns-switchy/config"
 	"dns-switchy/resolver"
 	"dns-switchy/util"
+	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1062,5 +1064,45 @@ resolvers:
 	}
 	if want := []string{"qq.com", "!ads.qq.com", "baidu.com"}; !reflect.DeepEqual(forward.Rule, want) {
 		t.Fatalf("forward.Rule = %#v, want %#v", forward.Rule, want)
+	}
+}
+
+// error 接口直接 JSON 编码是 {}，失败日志曾因此丢掉原因；这里锁住「原文进日志」。
+func TestDnsWriterFailLogsErrorMessage(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	query := makeQuery("fail.example.", dns.TypeA)
+	wire := newCaptureDNSResponseWriter()
+	(&DnsWriter{writer: wire, msg: query, start: time.Now().UnixMilli()}).Fail("up", errors.New("all upstreams fail"))
+
+	var entry StructureLog
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("decode log line %q: %v", buf.String(), err)
+	}
+	if entry.Error != "all upstreams fail" {
+		t.Fatalf("logged error = %q, want %q (raw %s)", entry.Error, "all upstreams fail", buf.String())
+	}
+	if wire.msg == nil || wire.msg.Rcode != dns.RcodeServerFailure {
+		t.Fatalf("response = %v, want SERVFAIL", wire.msg)
+	}
+}
+
+func TestHttpWriterFailReturnsErrorMessage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	query := makeQuery("fail.example.", dns.TypeA)
+	(&HttpWriter{writer: recorder, msg: query, start: time.Now().UnixMilli()}).Fail("up", errors.New("boom"))
+
+	var body struct {
+		Resolver string `json:"resolver"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", recorder.Body.String(), err)
+	}
+	if body.Error != "boom" || body.Resolver != "up" {
+		t.Fatalf("body = %+v, want resolver=up error=boom", body)
 	}
 }

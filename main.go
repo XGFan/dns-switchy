@@ -17,6 +17,8 @@ import (
 func main() {
 	rawFile := flag.String("c", "config.yaml", "config location")
 	ts := flag.Bool("x", false, "show timestamp in log")
+	// pprof 默认关闭：它不受 api_key 保护，开启时请只绑回环地址（如 127.0.0.1:6060）。
+	pprofAddr := flag.String("pprof", "", "pprof listen address, e.g. 127.0.0.1:6060 (disabled when empty)")
 	flag.Parse()
 	if !*ts {
 		log.SetFlags(0)
@@ -33,9 +35,12 @@ func main() {
 	passOrFatal(err)
 	configChan := make(chan *config.SwitchyConfig, 1)
 	configChan <- conf
-	go func() {
-		fmt.Println(http.ListenAndServe(":6060", nil))
-	}()
+	if *pprofAddr != "" {
+		go func() {
+			log.Printf("pprof listening on %s", *pprofAddr)
+			fmt.Println(http.ListenAndServe(*pprofAddr, nil))
+		}()
+	}
 
 	// controller coordinates all config changes (web writes + external edits),
 	// de-duplicating self-writes by content hash and routing resolvers-only

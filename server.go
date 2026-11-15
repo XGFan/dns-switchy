@@ -485,7 +485,7 @@ func (a *HttpWriter) Fail(name interface{}, err error) {
 	a.writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(a.writer).Encode(map[string]interface{}{
 		"resolver": fmt.Sprintf("%s", name),
-		"error":    err,
+		"error":    errString(err),
 	})
 }
 
@@ -541,7 +541,7 @@ func (w *DnsWriter) Fail(name interface{}, err error) {
 		Time:     time.Now().UnixMilli() - w.start,
 		Type:     dns.TypeToString[w.msg.Question[0].Qtype],
 		Question: w.msg.Question[0].Name,
-		Error:    err,
+		Error:    errString(err),
 	}
 	_ = json.NewEncoder(log.Writer()).Encode(structureLog)
 	resp := new(dns.Msg)
@@ -578,5 +578,13 @@ type StructureLog struct {
 	Question   string `json:"question,omitempty"`
 	RCode      string `json:"rCode,omitempty"`
 	AnswerSize int    `json:"answerSize"`
-	Error      error  `json:"error,omitempty"`
+	// Error 必须是字符串：error 接口直接 JSON 编码只会得到 {}，日志里就看不到失败原因。
+	Error string `json:"error,omitempty"`
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
