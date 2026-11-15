@@ -93,6 +93,16 @@ func reloadServer(runningServer *DnsSwitchyServer, conf *config.SwitchyConfig) (
 	if err != nil {
 		return runningServer, err
 	}
+	if runningServer != nil && !reusePortSupported {
+		// 不支持 reuseport 的平台上新旧 socket 无法共存于同一地址，只能先停旧服务。
+		runningServer.Shutdown()
+		runningServer = nil
+	}
+	// 先绑定新端口、再停旧服务：绑定失败时旧服务原样继续跑，不会出现进程在、端口没人听的状态。
+	if err = newServer.Listen(); err != nil {
+		newServer.closeResolvers()
+		return runningServer, err
+	}
 	if runningServer != nil {
 		runningServer.Shutdown()
 	}

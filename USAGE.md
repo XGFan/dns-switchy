@@ -3,7 +3,7 @@
 ## 顶层配置
 
 ```yaml
-addr: ":1053"            # 监听地址，UDP，必填
+addr: ":1053"            # 监听地址，UDP + TCP，必填
 ttl: 5m                  # 全局缓存 TTL，可选
 http: ":8080"            # HTTP API 地址，可选
 api_key: "长随机串"       # /api/* 的鉴权 key，可选，缺省不鉴权
@@ -13,7 +13,7 @@ resolvers: []            # Resolver 列表，按顺序匹配
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `addr` | string | 是 | UDP 监听地址，格式 `:port` 或 `ip:port` |
+| `addr` | string | 是 | DNS 监听地址（UDP 与 TCP 同端口），格式 `:port` 或 `ip:port`。UDP 绑定失败即启动失败；TCP 绑定失败只记日志、仅服务 UDP |
 | `ttl` | duration | 否 | 全局缓存时间，如 `5m`、`600s`。设为 `-1s` 禁用缓存 |
 | `http` | string | 否 | HTTP API 地址。TCP 格式 `:8080`，Unix socket 格式 `unix:/path/to/sock` |
 | `api_key` | string | 否 | 非空则全部 `/api/*` 要求 `X-Api-Key` 头，不匹配 401。缺省空 = 不鉴权。详见 [鉴权](#鉴权api-key) |

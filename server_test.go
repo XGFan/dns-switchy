@@ -940,6 +940,9 @@ func TestStartReturnsImmediately(t *testing.T) {
 		config:   &config.SwitchyConfig{Addr: reserveUDPAddr(t)},
 		dnsCache: &util.NoCache{},
 	}
+	if err := server.Listen(); err != nil {
+		t.Fatalf("Listen fail: %v", err)
+	}
 
 	startDone := make(chan struct{})
 	go func() {

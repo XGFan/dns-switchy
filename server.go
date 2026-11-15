@@ -79,6 +79,7 @@ func (g *resolverGen) closeAll() {
 type DnsSwitchyServer struct {
 	config     *config.SwitchyConfig
 	udpServer  *dns.Server
+	tcpServer  *dns.Server
 	httpServer *http.Server
 	gen        atomic.Pointer[resolverGen]
 	genMu      sync.RWMutex // protects gen.inUse / gen.retired
@@ -88,6 +89,11 @@ type DnsSwitchyServer struct {
 	apiKey     string            // 见 auth.go：空 = 不鉴权；创建后只读
 	shutdown   bool
 	wg         sync.WaitGroup
+
+	// 由 Listen 预先绑定；Start 只在这些 socket 上 serve。
+	udpConn      net.PacketConn
+	tcpListener  net.Listener
+	httpListener net.Listener
 }
 
 // acquireGen pins the active resolver generation for the duration of a query.
@@ -160,13 +166,21 @@ func (s *DnsSwitchyServer) Shutdown() {
 	if s.udpServer != nil {
 		_ = s.udpServer.Shutdown()
 	}
+	if s.tcpServer != nil {
+		_ = s.tcpServer.Shutdown()
+	}
 	if s.httpServer != nil {
 		_ = s.httpServer.Shutdown(context.Background())
 	}
+	s.closeListeners()
+	s.closeResolvers()
+	s.wg.Wait()
+}
+
+func (s *DnsSwitchyServer) closeResolvers() {
 	if gen := s.gen.Load(); gen != nil {
 		gen.closeAll()
 	}
-	s.wg.Wait()
 }
 
 func (s *DnsSwitchyServer) Start() {
@@ -176,46 +190,35 @@ func (s *DnsSwitchyServer) Start() {
 		resolvers = gen.resolvers
 	}
 	log.Printf("Started at %s\nHTTP: %s\nTTL: %s\nResolvers: %s", s.config.Addr, s.config.Http, s.config.TTL, resolvers)
-	s.udpServer = &dns.Server{
-		Net:       "udp",
-		Addr:      s.config.Addr,
-		Handler:   s.plainUDPHandler(),
-		ReusePort: true,
-		ReuseAddr: true,
-	}
+	handler := s.dnsHandler()
+	s.udpServer = &dns.Server{PacketConn: s.udpConn, Handler: handler}
 	s.wg.Add(1)
-	go s.StartPlainUDPServer()
-	if s.config.Http != nil {
+	go s.serve("udp", s.udpServer.ActivateAndServe)
+	if s.tcpListener != nil {
+		s.tcpServer = &dns.Server{Listener: s.tcpListener, Handler: handler}
+		s.wg.Add(1)
+		go s.serve("tcp", s.tcpServer.ActivateAndServe)
+	}
+	if s.httpListener != nil {
 		s.httpServer = &http.Server{Handler: s.httpMux()}
 		s.wg.Add(1)
-		go s.StartHttpServer()
-	}
-}
-
-func (s *DnsSwitchyServer) StartPlainUDPServer() {
-	defer s.wg.Done()
-	retry(s.udpServer.ListenAndServe)
-}
-
-func (s *DnsSwitchyServer) StartHttpServer() {
-	defer s.wg.Done()
-	if s.httpServer == nil || s.config.Http == nil {
-		return
-	}
-	retry(func() error {
-		listener, err := s.config.Http.CreateListener()
-		if err != nil {
-			return err
-		}
-		err = s.httpServer.Serve(listener)
-		if errors.Is(err, http.ErrServerClosed) {
+		go s.serve("http", func() error {
+			if err := s.httpServer.Serve(s.httpListener); !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
 			return nil
-		}
-		return err
-	})
+		})
+	}
 }
 
-func (s *DnsSwitchyServer) plainUDPHandler() dns.HandlerFunc {
+func (s *DnsSwitchyServer) serve(name string, fn func() error) {
+	defer s.wg.Done()
+	if err := fn(); err != nil {
+		log.Printf("%s server stopped: %v", name, err)
+	}
+}
+
+func (s *DnsSwitchyServer) dnsHandler() dns.HandlerFunc {
 	return func(writer dns.ResponseWriter, msg *dns.Msg) {
 		s.dnsMsgHandler(&DnsWriter{writer, msg, time.Now().UnixMilli()}, msg)
 	}
@@ -417,18 +420,6 @@ func Create(conf *config.SwitchyConfig) (*DnsSwitchyServer, error) {
 	return s, nil
 }
 
-func retry(listenFunc func() error) {
-	for i := 1; i <= 3; i++ {
-		err := listenFunc()
-		if err != nil {
-			log.Printf("Retry fail: %v", err)
-			time.Sleep(time.Duration(i) * time.Second)
-		} else {
-			break
-		}
-	}
-}
-
 func calcTTL(resolvers []resolver.DnsResolver) time.Duration {
 	minTTL := time.Duration(0)
 	for _, res := range resolvers {
@@ -522,11 +513,15 @@ func (w *DnsWriter) Success(name interface{}, resp *dns.Msg) {
 		writeResp.RecursionDesired = w.msg.RecursionDesired // Copy rd bit
 		writeResp.CheckingDisabled = w.msg.CheckingDisabled // Copy cd bit
 	}
-	writeResp.Truncate(w.udpSize())
+	writeResp.Truncate(w.maxSize())
 	_ = w.writer.WriteMsg(writeResp)
 }
 
-func (w *DnsWriter) udpSize() int {
+// maxSize 是应答允许的最大字节数：TCP 不受 UDP 报文上限约束；UDP 取客户端 EDNS 声明值，缺省 512。
+func (w *DnsWriter) maxSize() int {
+	if _, ok := w.writer.RemoteAddr().(*net.TCPAddr); ok {
+		return dns.MaxMsgSize
+	}
 	if opt := w.msg.IsEdns0(); opt != nil && opt.UDPSize() > 0 {
 		return int(opt.UDPSize())
 	}

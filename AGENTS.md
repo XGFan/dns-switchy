@@ -31,9 +31,9 @@ npm run test:e2e                 # playwright
 
 ### Request flow
 
-`main.go` watches the config file's **directory** (fsnotify; survives atomic-rename saves) and starts pprof on `:6060`. Config changes funnel through `ConfigController` (`reloader.go`): self-writes are de-duplicated by content hash; resolvers-only changes are swapped in place (RCU), top-level changes rebuild the whole `DnsSwitchyServer` (create new, shut down old).
+`main.go` watches the config file's **directory** (fsnotify; survives atomic-rename saves) and starts pprof on `:6060`. Config changes funnel through `ConfigController` (`reloader.go`): self-writes are de-duplicated by content hash; resolvers-only changes are swapped in place (RCU), top-level changes rebuild the whole `DnsSwitchyServer` (create + bind new, then shut down old).
 
-`DnsSwitchyServer` (`server.go`) listens on UDP always and HTTP optionally. A query goes `checkAndUnify` → global cache (`util.Cache`, TTL 0 disables) → resolver chain: first resolver whose `Accept()` returns true handles it. Resolver order in config is match priority.
+`DnsSwitchyServer` (`server.go`) listens on UDP + TCP on `addr` and HTTP optionally. `Listen()` (`listen.go`) binds all sockets up front with SO_REUSEPORT; `reloadServer` binds the new server before shutting down the old one, so a failed UDP bind keeps the old server running (TCP/HTTP bind failures only log — a panel port conflict must not take down LAN DNS). Platforms without reuseport (Windows) shut down first. A query goes `checkAndUnify` → global cache (`util.Cache`, TTL 0 disables) → resolver chain: first resolver whose `Accept()` returns true handles it. Resolver order in config is match priority.
 
 - `BreakError` (`resolver/forward.go`) stops the chain immediately on failure (`break-on-fail: true`); the mdns resolver always returns it on runtime socket failure so `.local` never falls through to public upstreams.
 - `ResultWriter` abstracts UDP vs HTTP API responses (`DnsWriter` / `HttpWriter`).
