@@ -338,6 +338,57 @@ func TestPreloaderRefreshBoundedParallel(t *testing.T) {
 	}
 }
 
+// 命中时 RR TTL = max(1, min(原 TTL, ttl) − 已缓存时长)，过期条目给 preloaderStaleTTL，OPT 不动。
+func TestPreloaderCachedResponseTTL(t *testing.T) {
+	ttl := time.Minute
+	pl := newCountingPreloader(&countingUpstream{}, ttl)
+	now := time.Now()
+	a := func(ttl uint32) dns.RR {
+		return &dns.A{Hdr: dns.RR_Header{Name: "x.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl}, A: net.IPv4(10, 0, 0, 1)}
+	}
+	tests := []struct {
+		name      string
+		upstream  uint32
+		remaining time.Duration
+		want      uint32
+	}{
+		{"capped by preloader ttl", 300, 20 * time.Second, 20},
+		{"shorter upstream ttl kept", 10, 55 * time.Second, 5},
+		{"floor at 1s", 10, 30 * time.Second, 1},
+		{"stale entry", 300, -time.Second, preloaderStaleTTL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opt := &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT, Ttl: 0x8000}}
+			item := TimeItem{ExpiredAt: now.Add(tt.remaining), Item: &dns.Msg{Answer: []dns.RR{a(tt.upstream)}, Extra: []dns.RR{opt}}}
+			resp := pl.cachedResponse(item, now)
+			if got := resp.Answer[0].Header().Ttl; got != tt.want {
+				t.Fatalf("answer ttl = %d, want %d", got, tt.want)
+			}
+			if got := resp.Extra[0].Header().Ttl; got != 0x8000 {
+				t.Fatalf("OPT ttl = %#x, want unchanged", got)
+			}
+			if got := item.Item.Answer[0].Header().Ttl; got != tt.upstream {
+				t.Fatalf("cached item mutated: ttl = %d, want %d", got, tt.upstream)
+			}
+		})
+	}
+}
+
+// 首次查询（未命中）返回的应答同样按 preloader ttl 封顶。
+func TestPreloaderMissResponseTTLCapped(t *testing.T) {
+	pl := newCountingPreloader(&countingUpstream{answer: true}, 10*time.Second) // 上游给 60s
+	msg := new(dns.Msg)
+	msg.SetQuestion("miss.example.", dns.TypeA)
+	resp, err := pl.Resolve(msg)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := resp.Answer[0].Header().Ttl; got != 10 {
+		t.Fatalf("ttl = %d, want 10", got)
+	}
+}
+
 func TestPreloaderNoAnswerLeavesNoLastHit(t *testing.T) {
 	pl := newCountingPreloader(&countingUpstream{answer: false}, time.Minute)
 	msg := new(dns.Msg)

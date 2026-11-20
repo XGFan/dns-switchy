@@ -17,6 +17,9 @@ const preloaderIdleTicks = 60
 // preloaderRefreshWorkers：一轮刷新最多同时在途的上游查询数。
 const preloaderRefreshWorkers = 8
 
+// preloaderStaleTTL：条目已过期（上游刷新失败、在返回旧结果）时给客户端的 RR TTL（秒），取 RFC 8767 的建议值。
+const preloaderStaleTTL = 30
+
 type Preloader struct {
 	*Forward
 	dnsCache  sync.Map
@@ -138,17 +141,44 @@ func (pl *Preloader) PreLoad(msg *dns.Msg) (*dns.Msg, error) {
 	return resolve, err
 }
 
+// cachedResponse 返回缓存应答的副本，RR TTL 改写为 max(1, min(原 TTL, ttl) − 已缓存时长)：
+// 客户端缓存不会超过下一次刷新，后台刷新的结果能及时生效。条目已过期时统一给 preloaderStaleTTL。
+func (pl *Preloader) cachedResponse(item TimeItem, now time.Time) *dns.Msg {
+	resp := item.Item.Copy()
+	remaining := item.ExpiredAt.Sub(now)
+	age := pl.ttl - remaining // ExpiredAt = 写入时间 + ttl
+	for _, rrs := range [][]dns.RR{resp.Answer, resp.Ns, resp.Extra} {
+		for _, rr := range rrs {
+			h := rr.Header()
+			if h.Rrtype == dns.TypeOPT {
+				continue
+			}
+			if remaining <= 0 {
+				h.Ttl = preloaderStaleTTL
+				continue
+			}
+			left := min(time.Duration(h.Ttl)*time.Second, pl.ttl) - age
+			h.Ttl = uint32(max((left+time.Second-1)/time.Second, 1))
+		}
+	}
+	return resp
+}
+
 func (pl *Preloader) Resolve(msg *dns.Msg) (*dns.Msg, error) {
 	q := msg.Question[0]
 	if cached, exist := pl.dnsCache.Load(q); exist {
-		pl.touch(q, time.Now())
-		return cached.(TimeItem).Item.Copy(), nil
+		now := time.Now()
+		pl.touch(q, now)
+		return pl.cachedResponse(cached.(TimeItem), now), nil
 	}
 	resp, err := pl.PreLoad(msg)
 	// 只为真正进了缓存的名字记录查询时间：lastHit 的条目随缓存条目一起淘汰，
 	// 没答案、没进缓存的名字若也记录，就会在 lastHit 里永久残留。
-	if _, stored := pl.dnsCache.Load(q); stored {
-		pl.touch(q, time.Now())
+	if cached, stored := pl.dnsCache.Load(q); stored {
+		now := time.Now()
+		pl.touch(q, now)
+		// 首次查询的应答也按同样规则封顶 TTL。
+		return pl.cachedResponse(cached.(TimeItem), now), err
 	}
 	return resp, err
 }
