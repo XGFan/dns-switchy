@@ -14,6 +14,9 @@ import (
 // 名字都会被永久保留并按周期重新解析，内存和上游请求随运行时间单调增长。
 const preloaderIdleTicks = 60
 
+// preloaderRefreshWorkers：一轮刷新最多同时在途的上游查询数。
+const preloaderRefreshWorkers = 8
+
 type Preloader struct {
 	*Forward
 	dnsCache  sync.Map
@@ -67,12 +70,19 @@ func (pl *Preloader) Work() {
 	}
 }
 
-// refresh 重新解析已过期的条目；超过 preloaderIdleTicks 个周期没被查询的条目直接淘汰。
+// refresh 重新解析下个周期前就会过期的条目（最多 preloaderRefreshWorkers 个并行），全部完成才返回；
+// 超过 preloaderIdleTicks 个周期没被查询的条目直接淘汰。
+//
+// 判定留 ttl/2 余量而不是只刷已过期的：本轮刷新后 ExpiredAt = tick + 解析耗时 + ttl，略晚于
+// 下一轮 tick，只刷已过期的会让它在下一轮被跳过，实际刷新间隔变成 2×ttl。
 func (pl *Preloader) refresh(now time.Time) {
 	idleBefore := now.Add(-preloaderIdleTicks * pl.ttl).UnixNano()
+	refreshBefore := now.Add(pl.ttl / 2)
+	sem := make(chan struct{}, preloaderRefreshWorkers)
+	var wg sync.WaitGroup
 	pl.dnsCache.Range(func(key, value interface{}) bool {
 		v := value.(TimeItem)
-		if v.ExpiredAt.After(now) {
+		if !v.ExpiredAt.Before(refreshBefore) {
 			return true
 		}
 		oldQ := key.(dns.Question)
@@ -85,9 +95,16 @@ func (pl *Preloader) refresh(now time.Time) {
 		newMsg.Question = append(newMsg.Question, oldQ)
 		newMsg.Id = dns.Id()
 		newMsg.RecursionDesired = true
-		_, _ = pl.PreLoad(newMsg)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_, _ = pl.PreLoad(newMsg)
+		}()
 		return true
 	})
+	wg.Wait()
 }
 
 func (pl *Preloader) touch(q dns.Question, now time.Time) {

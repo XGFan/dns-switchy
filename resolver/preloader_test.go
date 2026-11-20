@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -255,6 +256,85 @@ func TestPreloaderRefreshEvictsIdleAndRefreshesActive(t *testing.T) {
 	}
 	if got := up.calls.Load(); got != 1 {
 		t.Fatalf("upstream calls during refresh = %d, want 1 (only the active entry)", got)
+	}
+}
+
+// 上一轮 tick 刚刷新过的条目（ExpiredAt = tick + 解析耗时 + ttl）必须在下一轮 tick 再刷新，
+// 不能因为「还差一点才过期」被跳过、拖成 2×ttl；刚写入、离过期还远的条目则不刷。
+func TestPreloaderRefreshIntervalIsOneTTL(t *testing.T) {
+	up := &countingUpstream{answer: true}
+	ttl := time.Minute
+	pl := newCountingPreloader(up, ttl)
+	tick := time.Now()
+	recent := dns.Question{Name: "recent.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	fresh := dns.Question{Name: "fresh.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	// 上一轮 tick（tick-ttl）刷新、解析耗时 50ms。
+	pl.dnsCache.Store(recent, TimeItem{ExpiredAt: tick.Add(50 * time.Millisecond), Item: new(dns.Msg)})
+	// 本周期内刚写入，离过期还有大半个周期。
+	pl.dnsCache.Store(fresh, TimeItem{ExpiredAt: tick.Add(ttl - time.Second), Item: new(dns.Msg)})
+	pl.touch(recent, tick)
+	pl.touch(fresh, tick)
+
+	pl.refresh(tick)
+
+	if got := up.calls.Load(); got != 1 {
+		t.Fatalf("upstream calls = %d, want 1 (only the entry refreshed last tick)", got)
+	}
+	v, _ := pl.dnsCache.Load(recent)
+	if !v.(TimeItem).ExpiredAt.After(tick.Add(ttl)) {
+		t.Fatalf("recent entry not refreshed: ExpiredAt = %v", v.(TimeItem).ExpiredAt)
+	}
+}
+
+type slowUpstream struct {
+	inflight, maxInflight, calls atomic.Int32
+}
+
+func (u *slowUpstream) Exchange(_ context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	u.calls.Add(1)
+	n := u.inflight.Add(1)
+	for {
+		m := u.maxInflight.Load()
+		if n <= m || u.maxInflight.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	u.inflight.Add(-1)
+	resp := new(dns.Msg)
+	resp.SetReply(msg)
+	resp.Answer = []dns.RR{&dns.A{
+		Hdr: dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+		A:   net.IPv4(10, 0, 0, 1),
+	}}
+	return resp, nil
+}
+func (u *slowUpstream) Address() string { return "slow" }
+func (u *slowUpstream) Close() error    { return nil }
+
+// 刷新并行但有上限，且 refresh 返回时所有条目都已刷新完。
+func TestPreloaderRefreshBoundedParallel(t *testing.T) {
+	up := &slowUpstream{}
+	ttl := time.Minute
+	pl := &Preloader{Forward: &Forward{Name: "pl", Upstream: up, ttl: ttl, stat: ForwardStat{alive: true}}}
+	const n = 3 * preloaderRefreshWorkers
+	for i := 0; i < n; i++ {
+		msg := new(dns.Msg)
+		msg.SetQuestion(fmt.Sprintf("n%d.example.", i), dns.TypeA)
+		if _, err := pl.Resolve(msg); err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+	}
+	up.calls.Store(0)
+	up.maxInflight.Store(0)
+
+	pl.refresh(time.Now().Add(ttl))
+
+	if got := up.calls.Load(); got != n {
+		t.Fatalf("upstream calls = %d, want %d", got, n)
+	}
+	if got := up.maxInflight.Load(); got != preloaderRefreshWorkers {
+		t.Fatalf("max in-flight = %d, want %d", got, preloaderRefreshWorkers)
 	}
 }
 
