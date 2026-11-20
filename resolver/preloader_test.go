@@ -259,30 +259,32 @@ func TestPreloaderRefreshEvictsIdleAndRefreshesActive(t *testing.T) {
 	}
 }
 
-// 上一轮 tick 刚刷新过的条目（ExpiredAt = tick + 解析耗时 + ttl）必须在下一轮 tick 再刷新，
-// 不能因为「还差一点才过期」被跳过、拖成 2×ttl；刚写入、离过期还远的条目则不刷。
+// 每轮 tick 刷新所有活跃条目：上一轮刚刷新的（ExpiredAt = tick + 解析耗时 + ttl）不能因「还差一点
+// 才过期」被跳过、拖成 2×ttl；后半个周期才写入的新条目也不能拖到第二轮、期间过期被当作旧结果返回。
 func TestPreloaderRefreshIntervalIsOneTTL(t *testing.T) {
 	up := &countingUpstream{answer: true}
 	ttl := time.Minute
 	pl := newCountingPreloader(up, ttl)
 	tick := time.Now()
 	recent := dns.Question{Name: "recent.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	fresh := dns.Question{Name: "fresh.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	late := dns.Question{Name: "late.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
 	// 上一轮 tick（tick-ttl）刷新、解析耗时 50ms。
 	pl.dnsCache.Store(recent, TimeItem{ExpiredAt: tick.Add(50 * time.Millisecond), Item: new(dns.Msg)})
-	// 本周期内刚写入，离过期还有大半个周期。
-	pl.dnsCache.Store(fresh, TimeItem{ExpiredAt: tick.Add(ttl - time.Second), Item: new(dns.Msg)})
+	// 上一周期的后半段（tick 前 ttl/4）才首次写入。
+	pl.dnsCache.Store(late, TimeItem{ExpiredAt: tick.Add(ttl * 3 / 4), Item: new(dns.Msg)})
 	pl.touch(recent, tick)
-	pl.touch(fresh, tick)
+	pl.touch(late, tick)
 
 	pl.refresh(tick)
 
-	if got := up.calls.Load(); got != 1 {
-		t.Fatalf("upstream calls = %d, want 1 (only the entry refreshed last tick)", got)
+	if got := up.calls.Load(); got != 2 {
+		t.Fatalf("upstream calls = %d, want 2", got)
 	}
-	v, _ := pl.dnsCache.Load(recent)
-	if !v.(TimeItem).ExpiredAt.After(tick.Add(ttl)) {
-		t.Fatalf("recent entry not refreshed: ExpiredAt = %v", v.(TimeItem).ExpiredAt)
+	for _, q := range []dns.Question{recent, late} {
+		v, _ := pl.dnsCache.Load(q)
+		if !v.(TimeItem).ExpiredAt.After(tick.Add(ttl)) {
+			t.Fatalf("%s not refreshed: ExpiredAt = %v", q.Name, v.(TimeItem).ExpiredAt)
+		}
 	}
 }
 

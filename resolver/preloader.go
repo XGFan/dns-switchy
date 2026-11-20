@@ -73,21 +73,17 @@ func (pl *Preloader) Work() {
 	}
 }
 
-// refresh 重新解析下个周期前就会过期的条目（最多 preloaderRefreshWorkers 个并行），全部完成才返回；
+// refresh 每轮重新解析所有条目（最多 preloaderRefreshWorkers 个并行），全部完成才返回；
 // 超过 preloaderIdleTicks 个周期没被查询的条目直接淘汰。
 //
-// 判定留 ttl/2 余量而不是只刷已过期的：本轮刷新后 ExpiredAt = tick + 解析耗时 + ttl，略晚于
-// 下一轮 tick，只刷已过期的会让它在下一轮被跳过，实际刷新间隔变成 2×ttl。
+// 不按 ExpiredAt 跳过：任何条目在下一轮 tick 前都会过期，跳过只会让它过期后被当作旧结果返回。
+// 只刷已过期的，本轮刚刷新的条目（ExpiredAt = tick + 解析耗时 + ttl）在下一轮还差一点没过期，
+// 实际刷新间隔变成 2×ttl；留 ttl/2 余量，则后半个周期才写入的新条目要到第二轮才刷新。
 func (pl *Preloader) refresh(now time.Time) {
 	idleBefore := now.Add(-preloaderIdleTicks * pl.ttl).UnixNano()
-	refreshBefore := now.Add(pl.ttl / 2)
 	sem := make(chan struct{}, preloaderRefreshWorkers)
 	var wg sync.WaitGroup
-	pl.dnsCache.Range(func(key, value interface{}) bool {
-		v := value.(TimeItem)
-		if !v.ExpiredAt.Before(refreshBefore) {
-			return true
-		}
+	pl.dnsCache.Range(func(key, _ interface{}) bool {
 		oldQ := key.(dns.Question)
 		if pl.lastHitOf(oldQ) < idleBefore {
 			pl.dnsCache.Delete(oldQ)
